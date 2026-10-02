@@ -6,7 +6,6 @@ from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
 
 app = Flask(__name__)
-
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
@@ -25,7 +24,6 @@ def get_progress():
 
 @app.route('/api/clean', methods=['POST'])
 def clean_server_dir():
-    """Supprime tous les fichiers GRIB temporaires et téléchargés pour libérer l'espace disque de Render"""
     try:
         shutil.rmtree(UPLOAD_FOLDER)
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -33,24 +31,41 @@ def clean_server_dir():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/crop_fast', methods=['POST'])
-def crop_fast_grib():
+@app.route('/api/upload_chunk', methods=['POST'])
+def upload_chunk():
+    """Réceptionne et assemble les petits morceaux de 5 Mo envoyés par le navigateur"""
+    file = request.files['file']
+    filename = request.form.get('filename')
+    chunk_index = int(request.form.get('chunkIndex'))
+    total_chunks = int(request.form.get('totalChunks'))
+    
+    # Fichier temporaire d'assemblage
+    temp_path = os.path.join(UPLOAD_FOLDER, "raw_" + filename)
+    
+    # Mode 'ab' (append binary) : on écrit à la suite du fichier existant
+    with open(temp_path, 'ab') as f:
+        f.write(file.read())
+        
+    return jsonify({"success": True, "message": f"Morceau {chunk_index + 1}/{total_chunks} reçu."})
+
+@app.route('/api/crop_chunked', methods=['POST'])
+def crop_chunked():
+    """Lance la découpe une fois le fichier entièrement reconstruit sur le serveur"""
     global PROGRESS
     PROGRESS = 0
     
-    if 'file' not in request.files:
-        return jsonify({"error": "Fichier manquant"}), 400
-        
-    file = request.files['file']
-    bounds = json.loads(request.form.get("bounds", "{}"))
-    selected_items = json.loads(request.form.get("params", "[]"))
+    data = request.json
+    filename = data.get("filename")
+    bounds = data.get("bounds")
+    selected_items = data.get("params")
     
-    temp_path = os.path.join(UPLOAD_FOLDER, "raw_" + file.filename)
-    file.save(temp_path)
-    
-    output_filename = "crop_" + file.filename
+    temp_path = os.path.join(UPLOAD_FOLDER, "raw_" + filename)
+    output_filename = "crop_" + filename
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     
+    if not os.path.exists(temp_path):
+        return jsonify({"error": "Erreur d'assemblage : fichier introuvable sur le serveur."}), 400
+        
     try:
         fin = pygrib.open(temp_path)
         total_messages = sum(1 for _ in fin)
