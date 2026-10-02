@@ -38,7 +38,10 @@
         <button id="btn-crop" disabled>💾 Découper & Télécharger</button>
     </div>
 
-    <div id="map"></div>
+    <div id="map">
+        <!-- Balise de transport d'image invisible pour contourner la sécurité Strict-Mode de Firefox -->
+        <img id="raw-map-source" src="{{ map_data_raw }}" style="display: none;">
+    </div>
     <script>
         !function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t="undefined"!=typeof globalThis?globalThis:t||self).L={})}(this,(function(t){"use strict";function e(t){var e,i,n,s;for(i=1,n=arguments.length;i<n;i++)for(e in s=arguments[i])t[e]=s[e];return t}var i=Object.create||function(){return function(t){return e.prototype=t,new e}}();function n(t){return Array.prototype.slice.call(arguments,1)}function s(t){return t._leaflet_id=t._leaflet_id||++o,t._leaflet_id}var o=0;t.version="1.9.4",t.extend=e,t.create=i,t.stamp=s}));
 
@@ -47,8 +50,8 @@
             mapEl.style.background = "#1e293b";
             mapEl.style.position = "relative";
             
-            // On récupère la chaîne Base64 générée et injectée directement par Python
-            const mapImageInline = "{{ map_data_raw }}";
+            // Extraction sécurisée de la chaîne d'image chargée par l'entête Flask
+            const mapImageInline = document.getElementById("raw-map-source").src;
             
             let bgDiv = document.createElement('div');
             bgDiv.style.position = "absolute";
@@ -133,7 +136,7 @@
             document.getElementById('btn-crop').disabled = true;
             
             const formData = new FormData();
-            formData.append('file', window.selectedFile[0]);
+            formData.append('file', window.selectedFile);
             formData.append('bounds', JSON.stringify(window.currentBounds));
             formData.append('params', JSON.stringify(selectedParams));
 
