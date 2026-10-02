@@ -2,11 +2,13 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Web Cropper Pro - HD Live Map</title>
+    <title>GRIB Web Cropper Pro - HD Map Offline</title>
     <style>
         body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
         #sidebar { width: 350px; padding: 20px; display: flex; flex-direction: column; gap: 15px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; }
-        #map { flex: 1; height: 100%; background: #1e293b; position: relative; cursor: crosshair; }
+        #map-container { flex: 1; height: 100%; position: relative; background: #0b0f19; overflow: hidden; }
+        #map-background { position: absolute; top:0; left:0; width:100%; height:100%; opacity:0.65; z-index:1; }
+        #grid-canvas { position: absolute; top:0; left:0; width:100%; height:100%; cursor: crosshair; z-index:2; }
         button { background: #0ea5e9; color: white; border: none; padding: 12px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 14px; }
         button:hover { background: #0284c7; }
         button:disabled { background: #475569; cursor: not-allowed; }
@@ -21,88 +23,130 @@
 
     <div id="sidebar">
         <h2>📁 GRIB Web Selector</h2>
+        
         <div style="display:flex; flex-direction:column; gap:5px;">
             <label style="font-size:13px; color:#94a3b8;">Sélectionnez votre fichier GRIB :</label>
             <input type="file" id="grib-file">
         </div>
+        
         <button id="btn-load">⚡ Analyser Instantanément</button>
         <div id="status" style="color: #94a3b8; font-size: 13px;">Aucun fichier en mémoire.</div>
+        
         <h3>📊 Paramètres détectés :</h3>
         <select id="param-list" multiple></select>
+        
         <h3>🌐 Zone de découpe :</h3>
         <div id="coords-display" class="coords">Aucune zone tracée.<br><span style="font-size:10px;color:#38bdf8;">(Shift + Clic Glisser sur la carte)</span></div>
+        
         <div id="progress-container" class="progress-box">
             <span style="font-size:12px; color:#34d399;" id="progress-text">Génération du fichier : 0%</span>
             <progress id="progress-bar" value="0" max="100"></progress>
         </div>
+        
         <button id="btn-crop" disabled>💾 Découper & Télécharger</button>
     </div>
 
-    <div id="map">
-        <!-- Balise de transport d'image invisible pour contourner la sécurité Strict-Mode de Firefox -->
-        <img id="raw-map-source" src="{{ map_data_raw }}" style="display: none;">
+    <div id="map-container">
+        <canvas id="map-background"></canvas>
+        <canvas id="grid-canvas"></canvas>
+        <div id="selection-box" class="leaflet-zoom-box" style="display:none;"></div>
     </div>
     <script>
-        !function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t="undefined"!=typeof globalThis?globalThis:t||self).L={})}(this,(function(t){"use strict";function e(t){var e,i,n,s;for(i=1,n=arguments.length;i<n;i++)for(e in s=arguments[i])t[e]=s[e];return t}var i=Object.create||function(){return function(t){return e.prototype=t,new e}}();function n(t){return Array.prototype.slice.call(arguments,1)}function s(t){return t._leaflet_id=t._leaflet_id||++o,t._leaflet_id}var o=0;t.version="1.9.4",t.extend=e,t.create=i,t.stamp=s}));
+        const canvas = document.getElementById('grid-canvas'); const ctx = canvas.getContext('2d');
+        const mapCanvas = document.getElementById('map-background'); const mctx = mapCanvas.getContext('2d');
+        const box = document.getElementById('selection-box'); const display = document.getElementById('coords-display');
 
-        L.map = function(id) {
-            const mapEl = document.getElementById(id);
-            mapEl.style.background = "#1e293b";
-            mapEl.style.position = "relative";
-            
-            // Extraction sécurisée de la chaîne d'image chargée par l'entête Flask
-            const mapImageInline = document.getElementById("raw-map-source").src;
-            
-            let bgDiv = document.createElement('div');
-            bgDiv.style.position = "absolute";
-            bgDiv.style.width = "100%"; bgDiv.style.height = "100%";
-            bgDiv.style.opacity = "0.75"; bgDiv.style.pointerEvents = "none";
-            bgDiv.style.backgroundImage = "url('" + mapImageInline + "')";
-            bgDiv.style.backgroundSize = "100% 100%"; bgDiv.style.backgroundRepeat = "no-repeat";
-            bgDiv.style.zIndex = "1";
-            mapEl.appendChild(bgDiv);
-            
-            let textDiv = document.createElement('div');
-            textDiv.style.position = "absolute"; textDiv.style.padding = "15px"; textDiv.style.color = "#fff";
-            textDiv.style.fontFamily = "sans-serif"; textDiv.style.zIndex = "10"; textDiv.style.pointerEvents = "none";
-            textDiv.style.textShadow = "0 2px 4px rgba(0,0,0,0.8)";
-            textDiv.innerHTML = "<h3>🗺️ True HD GRIB Map</h3><p>Maintenez la touche <b>Shift (Majuscule)</b> enfoncée, puis cliquez et glissez votre souris pour tracer la zone de sélection.</p>";
-            mapEl.appendChild(textDiv);
-            
-            let zBox = document.createElement('div');
-            zBox.className = 'leaflet-zoom-box'; zBox.style.display = 'none';
-            mapEl.appendChild(zBox);
-            
-            let isDr = false; let sX, sY;
-            function pToC(x,y) {
-                let lon = ((x / mapEl.offsetWidth) * 360) - 180;
-                let lat = 90 - ((y / mapEl.offsetHeight) * 180);
-                return { lat: parseFloat(lat.toFixed(2)), lon: parseFloat(lon.toFixed(2)) };
-            }
-            
-            mapEl.addEventListener('mousedown', function(e) {
-                if (!e.shiftKey) return; isDr = true;
-                const r = mapEl.getBoundingClientRect();
-                sX = e.clientX - r.left; sY = e.clientY - r.top;
-                zBox.style.left = sX+'px'; zBox.style.top = sY+'px';
-                zBox.style.width = '0px'; zBox.style.height = '0px'; zBox.style.display = 'block';
-            });
-            mapEl.addEventListener('mousemove', function(e) {
-                if (!isDr) return;
-                const r = mapEl.getBoundingClientRect();
-                let cX = e.clientX - r.left, cY = e.clientY - r.top;
-                let x = Math.min(sX, cX), y = Math.min(sY, cY), w = Math.abs(sX - cX), h = Math.abs(sY - cY);
-                zBox.style.left = x+'px'; zBox.style.top = y+'px'; zBox.style.width = w+'px'; zBox.style.height = h+'px';
-                let sC = pToC(sX, sY), eC = pToC(cX, cY);
-                window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
-                display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
-            });
-            mapEl.addEventListener('mouseup', function() { if (isDr) { isDr = false; checkReady(); } });
-            return this;
-        };
+        let isDrawing = false; let startX, startY, endX, endY; window.currentBounds = null; window.selectedFile = null;
 
-        window.currentBounds = null; window.selectedFile = null;
-        L.map('map');
+        function pixelToCoords(x, y) {
+            let lon = ((x / canvas.width) * 360) - 180;
+            let lat = 90 - ((y / canvas.height) * 180);
+            return { lat: parseFloat(lat.toFixed(2)), lon: parseFloat(lon.toFixed(2)) };
+        }
+        function toX(lon) { return ((lon + 180) / 360) * mapCanvas.width; }
+        function toY(lat) { return ((90 - lat) / 180) * mapCanvas.height; }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth - 350; canvas.height = window.innerHeight;
+            mapCanvas.width = window.innerWidth - 350; mapCanvas.height = window.innerHeight;
+            drawWorldMap(); drawBackgroundGrid();
+        }
+
+        function drawShape(poly) {
+            if (poly.length < 2) return;
+            mctx.beginPath(); mctx.moveTo(toX(poly[0][0]), toY(poly[0][1]));
+            for (let i = 1; i < poly.length; i++) mctx.lineTo(toX(poly[i][0]), toY(poly[i][1]));
+            mctx.closePath(); mctx.fill(); mctx.stroke();
+        }
+
+        // BASE DE DONNÉES CARTOGRAPHIQUE VECTORIELLE LISSÉE (Zéro image, 100% stable)
+        function drawWorldMap() {
+            mctx.fillStyle = '#0b0f19'; mctx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+            mctx.fillStyle = '#1e293b'; mctx.strokeStyle = '#334155'; mctx.lineWidth = 1.2;
+
+            // Europe de l'Ouest, France, Bretagne, Cotentin et Italie
+            drawShape([[-5.1,48.4],[-4.5,48.6],[-3,48.6],[-1.5,49.3],[-1.7,49.6],[-0.5,49.3],[1.3,50.1],[2.5,51.1],[4.5,51.4],[6.1,53.5],[8.5,54.5],[10.9,55.9],[14.2,54.2],[12.2,52.8],[6.1,51.1],[3.2,43.5],[5.4,43.3],[7.2,43.7],[9.2,44.2],[12.3,44.3],[13.6,45.7],[12.2,41.9],[15.0,38.2],[12.3,37.3],[14.1,40.7],[10.5,43.8],[7.4,43.4],[5.2,43.1],[3.1,41.9],[-1.4,43.4],[-1.2,44.6],[-2.2,47.2],[-5.1,48.4]]);
+            
+            // Péninsule Ibérique (Espagne & Portugal)
+            drawShape([[-1.4,43.4],[-3.7,43.4],[-9.0,43.0],[-9.5,42.3],[-8.9,38.5],[-9.3,37.0],[-5.3,36.1],[-1.0,36.8],[2.3,41.5],[3.1,41.9]]);
+            
+            // Royaume-Uni et Irlande
+            drawShape([[-5.0,50.1],[-6.0,50.5],[-5.3,52.1],[-4.9,54.1],[-6.4,56.5],[-7.2,58.3],[-4.1,57.6],[-1.8,55.5],[1.3,51.3],[-1.1,50.6],[-5.0,50.1]]);
+            drawShape([[-10.0,52.1],[-10.0,53.5],[-6.9,55.2],[-6.0,54.0],[-8.5,51.6],[-10.0,52.1]]);
+
+            // Corse et Sardaigne
+            drawShape([[8.7,42.6],[9.5,42.6],[9.4,41.4],[8.7,41.6]]);
+            drawShape([[8.4,41.2],[9.7,40.9],[9.6,39.2],[8.4,38.9],[7.9,40.2]]);
+
+            // Afrique et Bassin Méditerranéen
+            drawShape([[-5.3,36.1],[5.0,36.8],[11.0,36.9],[15.0,32.3],[25.0,31.6],[34.0,29.6],[43.4,12.3],[51.3,11.2],[39.3,-4.8],[26.2,-34.1],[18.3,-34.4],[11.8,-12.3],[-14.5,14.5],[-17.3,17.2],[-13.1,32.3],[-5.3,36.1]]);
+
+            // Amériques (Projection cylindrique calibrée)
+            drawShape([[-160,70],[-120,68],[-100,75],[-80,62],[-60,50],[-52,47],[-74,40],[-80,25],[-97,25],[-115,30],[-140,60]]);
+            drawShape([[-75,12],[-50,-5],[-35,-5],[-65,-50],[-75,-50],[-72,-15],[-75,12]]);
+        }
+
+        function drawBackgroundGrid() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)'; ctx.lineWidth = 0.5;
+            for(let i=0; i<canvas.width; i+=45) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
+            for(let j=0; j<canvas.height; j+=45) { ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(canvas.width, j); ctx.stroke(); }
+            
+            // Équateur et Greenwich
+            ctx.strokeStyle = 'rgba(14, 165, 233, 0.35)'; ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width, canvas.height/2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
+        }
+
+        function drawSelectionBox() {
+            drawBackgroundGrid(); if (!isDrawing) return;
+            ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2;
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
+            let x = Math.min(startX, endX); let y = Math.min(startY, endY);
+            let w = Math.abs(startX - endX); let h = Math.abs(startY - endY);
+            ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+        }
+
+        window.addEventListener('resize', resizeCanvas); setTimeout(resizeCanvas, 100);
+
+        canvas.addEventListener('mousedown', function(e) {
+            if (!e.shiftKey) return; isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            startX = e.clientX - rect.left; startY = e.clientY - rect.top;
+            endX = startX; endY = startY;
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            if (!isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            endX = e.clientX - rect.left; endY = e.clientY - rect.top;
+            drawSelectionBox();
+            let sC = pixelToCoords(startX, startY); let eC = pixelToCoords(endX, endY);
+            window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
+            display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
+        });
+
+        canvas.addEventListener('mouseup', function() { if (isDrawing) { isDrawing = false; checkReady(); } });
 
         document.getElementById('grib-file').addEventListener('change', function(e) {
             window.selectedFile = e.target.files;
