@@ -1,9 +1,7 @@
 import sys
 import os
 import json
-import ssl
-import urllib.request
-import base64
+import shutil
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
 
@@ -13,42 +11,25 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
-MAP_BASE64_DATA = ""
-
-def fetch_map_to_base64():
-    """Télécharge l'image HD en mémoire et la convertit en texte Base64 pour contourner les bugs de fichiers de Render"""
-    global MAP_BASE64_DATA
-    try:
-        ctx = ssl._create_unverified_context()
-        url = "https://wikimedia.org"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        
-        with urllib.request.urlopen(req, context=ctx) as response:
-            binary_data = response.read()
-            # Encodage en texte Base64 propre
-            encoded = base64.b64encode(binary_data).decode('utf-8')
-            MAP_BASE64_DATA = f"data:image/jpeg;base64,{encoded}"
-        print("✅ Fond de carte HD converti en mémoire avec succès !")
-    except Exception as e:
-        print(f"⚠️ Erreur conversion mémoire carte : {e}")
-        # En cas de coupure réseau, secours vectoriel léger pour ne pas laisser l'écran noir
-        MAP_BASE64_DATA = "data:image/svg+xml;utf8,<svg xmlns='http://w3.org' viewBox='0 0 360 180'><rect width='360' height='180' fill='%230f172a'/><path d='M165,35 L190,38 L188,44 L178,48 L162,50 L158,53 L160,44 Z' fill='%23334155'/></svg>"
-
-# Téléchargement initial en mémoire
-fetch_map_to_base64()
 
 @app.route('/')
 def index():
-    global MAP_BASE64_DATA
-    if not MAP_BASE64_DATA or "jpeg" not in MAP_BASE64_DATA:
-        fetch_map_to_base64()
-    # Injection directe de la carte sous forme de variable textuelle dans le HTML
-    return render_template('index.html', map_data_raw=MAP_BASE64_DATA)
+    return render_template('index.html')
 
 @app.route('/api/progress', methods=['GET'])
 def get_progress():
     global PROGRESS
     return jsonify({"progress": PROGRESS})
+
+@app.route('/api/clean', methods=['POST'])
+def clean_server_dir():
+    """Supprime tous les fichiers GRIB temporaires et téléchargés pour libérer l'espace disque de Render"""
+    try:
+        shutil.rmtree(UPLOAD_FOLDER)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        return jsonify({"success": True, "message": "Stockage cloud vidé avec succès ! (0 Mo occupés)"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/crop_fast', methods=['POST'])
 def crop_fast_grib():
