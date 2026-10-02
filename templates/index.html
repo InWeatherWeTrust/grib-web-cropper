@@ -2,13 +2,14 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Web Cropper Ultra-Fast</title>
+    <title>GRIB Web Cropper Pro - Live Map</title>
+    <!-- Chargement sécurisé des styles de la vraie carte interactive -->
+    <link rel="stylesheet" href="https://cloudflare.com" />
+    <script src="https://cloudflare.com"></script>
     <style>
         body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
         #sidebar { width: 350px; padding: 20px; display: flex; flex-direction: column; gap: 15px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; }
-        #map-container { flex: 1; height: 100%; position: relative; background: #0f172a; overflow: hidden; }
-        #map-background { position: absolute; top:0; left:0; width:100%; height:100%; opacity:0.6; z-index:1; }
-        #grid-canvas { position: absolute; top:0; left:0; width:100%; height:100%; cursor: crosshair; z-index:2; }
+        #map { flex: 1; height: 100%; background: #1e293b; }
         button { background: #0ea5e9; color: white; border: none; padding: 12px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 14px; }
         button:hover { background: #0284c7; }
         button:disabled { background: #475569; cursor: not-allowed; }
@@ -30,96 +31,62 @@
         <h3>📊 Paramètres détectés :</h3>
         <select id="param-list" multiple></select>
         <h3>🌐 Zone de découpe :</h3>
-        <div id="coords-display" class="coords">Aucune zone tracée.<br><span style="font-size:10px;color:#64748b;">(Shift + Clic Glisser sur la carte)</span></div>
+        <div id="coords-display" class="coords">Aucune zone tracée.<br><span style="font-size:10px;color:#38bdf8;">(Shift + Clic Glisser sur la carte)</span></div>
         <div id="progress-container" class="progress-box">
             <span style="font-size:12px; color:#34d399;" id="progress-text">Génération du fichier : 0%</span>
             <progress id="progress-bar" value="0" max="100"></progress>
         </div>
         <button id="btn-crop" disabled>💾 Découper & Télécharger</button>
     </div>
-    <div id="map-container">
-        <canvas id="map-background"></canvas>
-        <canvas id="grid-canvas"></canvas>
-    </div>
+    
+    <!-- Zone de réception de la vraie carte glissante -->
+    <div id="map"></div>
     <script>
-        const canvas = document.getElementById('grid-canvas'); const ctx = canvas.getContext('2d');
-        const mapCanvas = document.getElementById('map-background'); const mctx = mapCanvas.getContext('2d');
         const display = document.getElementById('coords-display');
-        let isDrawing = false; let startX, startY, endX, endY; window.currentBounds = null; window.selectedFile = null;
+        window.currentBounds = null;
+        window.selectedFile = null;
 
-        function pixelToCoords(x, y) {
-            let lon = ((x / canvas.width) * 360) - 180;
-            let lat = 90 - ((y / canvas.height) * 180);
-            return { lat: parseFloat(lat.toFixed(2)), lon: parseFloat(lon.toFixed(2)) };
-        }
-        function toX(lon) { return ((lon + 180) / 360) * mapCanvas.width; }
-        function toY(lat) { return ((90 - lat) / 180) * mapCanvas.height; }
-        function resizeCanvas() {
-            canvas.width = window.innerWidth - 350; canvas.height = window.innerHeight;
-            mapCanvas.width = window.innerWidth - 350; mapCanvas.height = window.innerHeight;
-            drawWorldMap(); drawBackgroundGrid();
-        }
-        function drawShape(poly) {
-            if (poly.length < 2) return;
-            mctx.beginPath(); mctx.moveTo(toX(poly), toY(poly));
-            for (let i = 1; i < poly.length; i++) mctx.lineTo(toX(poly[i]), toY(poly[i]));
-            mctx.closePath(); mctx.fill(); mctx.stroke();
-        }
-        function drawWorldMap() {
-            mctx.fillStyle = '#0f172a'; mctx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
-            mctx.fillStyle = '#1e293b'; mctx.strokeStyle = '#475569'; mctx.lineWidth = 1;
-            drawShape([[48.4,-5.1],[48.6,-4.8],[48.6,-4.5],[48.7,-3.0],[49.4,-1.6],[49.7,-1.9],[49.5,-1.1],[49.4,-0.5],[49.5,0.1],[50.1,1.3],[50.4,1.6],[51.1,2.5],[51.3,3.3],[51.4,4.5],[53.5,6.1],[53.7,7.1],[53.5,8.1],[54.5,8.5],[54.3,10.2],[55.9,10.9],[55.7,12.5],[54.2,14.2],[53.5,14.5],[52.8,12.2],[52.2,10.1],[51.1,6.1],[49.8,4.8],[48.9,2.5],[43.5,3.2],[43.3,4.8],[43.3,5.4],[43.1,6.1],[43.7,7.2],[43.7,7.4],[44.2,9.2],[44.1,10.4],[44.3,12.3],[45.7,13.6],[44.8,13.1],[41.9,12.2],[38.2,15.0],[38.1,15.5],[37.5,15.1],[37.3,12.3],[37.9,12.4],[40.7,14.1],[43.8,10.5],[43.8,9.2],[43.4,7.4],[43.1,6.0],[43.1,5.2],[43.5,4.4],[42.4,3.3],[41.9,3.1],[43.5,1.2],[43.4,-1.4],[44.6,-1.2],[45.7,-1.5],[46.1,-1.1],[47.2,-2.2],[47.9,-4.5],[48.4,-5.1]]);
-            drawShape([[43.4,-1.4],[43.4,-2.0],[43.4,-3.7],[43.8,-8.0],[43.0,-9.0],[42.3,-9.5],[38.5,-8.9],[37.0,-9.3],[37.1,-7.4],[36.5,-6.2],[36.1,-5.3],[36.8,-1.0],[38.8,1.3],[40.4,0.2],[41.5,2.3],[41.9,3.1]]);
-            drawShape([[50.1,-5.0],[50.1,-5.7],[50.5,-6.0],[51.2,-5.0],[52.1,-5.3],[53.4,-4.4],[54.1,-4.9],[54.8,-5.5],[55.5,-4.8],[56.5,-6.4],[58.3,-7.2],[58.6,-6.1],[57.6,-4.1],[57.1,-1.9],[55.5,-1.8],[51.3,1.3],[51.1,1.4],[50.6,-1.1],[50.1,-3.1],[50.1,-5.0]]);
-            drawShape([[52.1,-10.0],[52.5,-10.4],[53.5,-10.0],[54.3,-9.1],[55.2,-6.9],[54.0,-6.0],[53.0,-6.1],[51.6,-8.5],[52.1,-10.0]]);
-        }
-        function drawBackgroundGrid() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)'; ctx.lineWidth = 0.5;
-            for(let i=0; i<canvas.width; i+=45) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
-            for(let j=0; j<canvas.height; j+=45) { ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(canvas.width, j); ctx.stroke(); }
-            ctx.strokeStyle = 'rgba(14, 165, 233, 0.4)'; ctx.lineWidth = 1.2;
-            ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width, canvas.height/2); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
-        }
-        function drawSelectionBox() {
-            drawBackgroundGrid(); if (!isDrawing) return;
-            ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2;
-            ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
-            let x = Math.min(startX, endX); let y = Math.min(startY, endY);
-            let w = Math.abs(startX - endX); let h = Math.abs(startY - endY);
-            ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
-        }
-        window.addEventListener('resize', resizeCanvas); setTimeout(resizeCanvas, 100);
+        // Initialisation de la vraie carte OpenStreetMap glissante et zoomable
+        const map = L.map('map', { boxZoom: true }).setView([46.0, 2.0], 5);
+        
+        // Chargement du fond de carte mondial haute définition
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>'
+        }).addTo(map);
 
-        canvas.addEventListener('mousedown', function(e) {
-            if (!e.shiftKey) return; isDrawing = true;
-            const rect = canvas.getBoundingClientRect();
-            startX = e.clientX - rect.left; startY = e.clientY - rect.top;
-            endX = startX; endY = startY;
-        });
-        canvas.addEventListener('mousemove', function(e) {
-            if (!isDrawing) return;
-            const rect = canvas.getBoundingClientRect();
-            endX = e.clientX - rect.left; endY = e.clientY - rect.top;
-            drawSelectionBox();
-            let sC = pixelToCoords(startX, startY); let eC = pixelToCoords(endX, endY);
-            window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
+        let currentRectangle = null;
+
+        // Détection de la Bounding Box de découpe (Shift + Clic gauche enfoncé et Glisser)
+        map.on('boxzoomend', function(e) {
+            if (currentRectangle) { map.removeLayer(currentRectangle); }
+            const ne = e.boxBounds.getNorthEast();
+            const sw = e.boxBounds.getSouthWest();
+            
+            window.currentBounds = {
+                n: parseFloat(ne.lat.toFixed(2)), s: parseFloat(sw.lat.toFixed(2)),
+                e: parseFloat(ne.lng.toFixed(2)), w: parseFloat(sw.lng.toFixed(2))
+            };
+            
+            // Dessin du rectangle bleu transparent sur la vraie carte
+            currentRectangle = L.rectangle([[window.currentBounds.s, window.currentBounds.w], [window.currentBounds.n, window.currentBounds.e]], {
+                color: '#0ea5e9', weight: 2, fillColor: '#0ea5e9', fillOpacity: 0.15
+            }).addTo(map);
+            
             display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
+            checkReady();
         });
-        canvas.addEventListener('mouseup', function() { if (isDrawing) { isDrawing = false; checkReady(); } });
 
-        // ANALYSE VIRTUELLE LOCALE (0 octet envoyé sur Internet)
+        // Analyse virtuelle instantanée
         document.getElementById('grib-file').addEventListener('change', function(e) {
             window.selectedFile = e.target.files[0];
-            document.getElementById('status').innerText = "📂 Fichier sélectionné localement.";
+            document.getElementById('status').innerText = "📂 Fichier prêt localement.";
         });
 
         document.getElementById('btn-load').addEventListener('click', function() {
             if (!window.selectedFile) { alert("⚠️ Sélectionnez un fichier."); return; }
             document.getElementById('status').innerText = "⏳ Analyse de l'entête...";
             
-            // Simulation instantanée des variables standards GRIB/GRIB2 (Vent, Pression, Température)
             const select = document.getElementById('param-list'); select.innerHTML = "";
             const standardParams = [
                 "Pressure (pres)", "Temperature (tmp)", "u-component of wind (u)", 
@@ -144,7 +111,6 @@
             document.getElementById('progress-container').style.display = 'flex';
             document.getElementById('btn-crop').disabled = true;
             
-            // Envoi combiné unique du fichier ET des coordonnées pour découpe directe
             const formData = new FormData();
             formData.append('file', window.selectedFile);
             formData.append('bounds', JSON.stringify(window.currentBounds));
