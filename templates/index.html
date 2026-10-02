@@ -202,7 +202,11 @@
             fetch('/api/clean', { method: 'POST' }).then(res => res.json()).then(data => alert(data.message || data.error));
         };
 
-        document.getElementById('grib-file').addEventListener('change', function(e) { window.selectedFile = e.target.files; document.getElementById('status').innerText = "📂 Fichier prêt."; });
+        document.getElementById('grib-file').addEventListener('change', function(e) { 
+            window.selectedFile = e.target.files[0]; // Stockage de l'objet fichier natif
+            document.getElementById('status').innerText = "📂 Fichier prêt (" + (window.selectedFile.size / (1024*1024)).toFixed(1) + " Mo)"; 
+        });
+
         document.getElementById('btn-load').addEventListener('click', function() {
             if (!window.selectedFile) { alert("⚠️ Sélectionnez un fichier."); return; }
             document.getElementById('status').innerText = "⏳ Analyse en cours...";
@@ -217,28 +221,67 @@
             if (window.currentBounds && select.options.length > 0) { document.getElementById('btn-crop').disabled = false; }
         }
 
-        document.getElementById('btn-crop').onclick = function() {
+        // SYSTÈME DE TRANSMISSION PAR MORCEAUX (Anti-blocage Proxy)
+        async function uploadFileInChunks(file) {
+            const chunkSize = 5 * 1024 * 1024; // Tranches de 5 Mo
+            const totalChunks = Math.ceil(file.size / chunkSize);
+            
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * chunkSize;
+                const end = Math.min(file.size, start + chunkSize);
+                const chunk = file.slice(start, end);
+                
+                const formData = new FormData();
+                formData.append('file', chunk);
+                formData.append('filename', file.name);
+                formData.append('chunkIndex', i);
+                formData.append('totalChunks', totalChunks);
+                
+                document.getElementById('progress-text').innerText = `Téléversement cloud : Morceau ${i+1}/${totalChunks}...`;
+                document.getElementById('progress-bar').value = Math.status = int(((i + 1) / totalChunks) * 30); // 30% alloués à l'upload
+                
+                await fetch('/api/upload_chunk', { method: 'POST', body: formData });
+            }
+        }
+
+        document.getElementById('btn-crop').onclick = async function() {
             const select = document.getElementById('param-list');
             const selectedParams = Array.from(select.selectedOptions).map(opt => opt.value);
-            document.getElementById('progress-container').style.display = 'flex'; document.getElementById('btn-crop').disabled = true;
             
-            const formData = new FormData();
-            formData.append('file', window.selectedFile);
-            formData.append('bounds', JSON.stringify(window.currentBounds));
-            formData.append('params', JSON.stringify(selectedParams));
+            document.getElementById('progress-container').style.display = 'flex';
+            document.getElementById('btn-crop').disabled = true;
+            
+            try {
+                // Étape A : Envoyer le fichier par petites tranches de 5 Mo sécurisées
+                await uploadFileInChunks(window.selectedFile);
+                
+                // Étape B : Lancer l'écouteur d'avancement pour la découpe pygrib réelle (de 30% à 100%)
+                let progressInterval = setInterval(function() {
+                    fetch('/api/progress').then(res => res.json()).then(data => {
+                        let actualProgress = 30 + Math.floor(data.progress * 0.7);
+                        document.getElementById('progress-bar').value = actualProgress;
+                        document.getElementById('progress-text').innerText = "Découpe météo en cours : " + data.progress + "%";
+                    });
+                }, 500);
 
-            let progressInterval = setInterval(function() {
-                fetch('/api/progress').then(res => res.json()).then(data => {
-                    document.getElementById('progress-bar').value = data.progress;
-                    document.getElementById('progress-text').innerText = "Génération du fichier : " + data.progress + "%";
+                // Étape C : Ordonner au serveur de traiter le fichier assemblé
+                fetch('/api/crop_chunked', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: window.selectedFile.name, bounds: window.currentBounds, params: selectedParams })
+                })
+                .then(res => res.json()).then(data => {
+                    clearInterval(progressInterval);
+                    document.getElementById('progress-container').style.display = 'none';
+                    document.getElementById('btn-crop').disabled = false;
+                    if (data.success) { window.location.href = data.download_url; } 
+                    else { alert("❌ Erreur : " + data.error); }
                 });
-            }, 400);
-
-            fetch('/api/crop_fast', { method: 'POST', body: formData })
-            .then(res => res.json()).then(data => {
-                clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
-                if (data.success) { window.location.href = data.download_url; } else { alert("❌ Erreur : " + data.error); }
-            });
+            } catch (err) {
+                document.getElementById('progress-container').style.display = 'none';
+                document.getElementById('btn-crop').disabled = false;
+                alert("❌ Erreur de transfert par morceaux.");
+            }
         };
     </script>
 </body>
