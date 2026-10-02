@@ -21,32 +21,25 @@
 
     <div id="sidebar">
         <h2>📁 GRIB Web Selector</h2>
-        
         <div style="display:flex; flex-direction:column; gap:5px;">
             <label style="font-size:13px; color:#94a3b8;">Sélectionnez votre fichier GRIB :</label>
             <input type="file" id="grib-file">
         </div>
-        
         <button id="btn-load">⚡ Analyser Instantanément</button>
         <div id="status" style="color: #94a3b8; font-size: 13px;">Aucun fichier en mémoire.</div>
-        
         <h3>📊 Paramètres détectés :</h3>
         <select id="param-list" multiple></select>
-        
         <h3>🌐 Zone de découpe :</h3>
         <div id="coords-display" class="coords">Aucune zone tracée.<br><span style="font-size:10px;color:#38bdf8;">(Shift + Clic Glisser sur la carte)</span></div>
-        
         <div id="progress-container" class="progress-box">
             <span style="font-size:12px; color:#34d399;" id="progress-text">Génération du fichier : 0%</span>
             <progress id="progress-bar" value="0" max="100"></progress>
         </div>
-        
         <button id="btn-crop" disabled>💾 Découper & Télécharger</button>
     </div>
 
     <div id="map"></div>
     <script>
-        // Noyau de structure cartographique autonome
         !function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t="undefined"!=typeof globalThis?globalThis:t||self).L={})}(this,(function(t){"use strict";function e(t){var e,i,n,s;for(i=1,n=arguments.length;i<n;i++)for(e in s=arguments[i])t[e]=s[e];return t}var i=Object.create||function(){return function(t){return e.prototype=t,new e}}();function n(t){return Array.prototype.slice.call(arguments,1)}function s(t){return t._leaflet_id=t._leaflet_id||++o,t._leaflet_id}var o=0;t.version="1.9.4",t.extend=e,t.create=i,t.stamp=s}));
 
         L.map = function(id) {
@@ -54,33 +47,27 @@
             mapEl.style.background = "#1e293b";
             mapEl.style.position = "relative";
             
-            // Appel de l'image locale téléchargée automatiquement par le serveur Python
+            // On récupère la chaîne Base64 générée et injectée directement par Python
+            const mapImageInline = "{{ map_data_raw }}";
+            
             let bgDiv = document.createElement('div');
             bgDiv.style.position = "absolute";
-            bgDiv.style.width = "100%";
-            bgDiv.style.height = "100%";
-            bgDiv.style.opacity = "0.75";
-            bgDiv.style.pointerEvents = "none";
-            bgDiv.style.backgroundImage = "url('/static/world_map.jpg')"; // <-- Route statique Render vers l'image locale
-            bgDiv.style.backgroundSize = "100% 100%";
-            bgDiv.style.backgroundRepeat = "no-repeat";
+            bgDiv.style.width = "100%"; bgDiv.style.height = "100%";
+            bgDiv.style.opacity = "0.75"; bgDiv.style.pointerEvents = "none";
+            bgDiv.style.backgroundImage = "url('" + mapImageInline + "')";
+            bgDiv.style.backgroundSize = "100% 100%"; bgDiv.style.backgroundRepeat = "no-repeat";
             bgDiv.style.zIndex = "1";
             mapEl.appendChild(bgDiv);
             
             let textDiv = document.createElement('div');
-            textDiv.style.position = "absolute";
-            textDiv.style.padding = "15px";
-            textDiv.style.color = "#fff";
-            textDiv.style.fontFamily = "sans-serif";
-            textDiv.style.zIndex = "10";
-            textDiv.style.pointerEvents = "none";
+            textDiv.style.position = "absolute"; textDiv.style.padding = "15px"; textDiv.style.color = "#fff";
+            textDiv.style.fontFamily = "sans-serif"; textDiv.style.zIndex = "10"; textDiv.style.pointerEvents = "none";
             textDiv.style.textShadow = "0 2px 4px rgba(0,0,0,0.8)";
             textDiv.innerHTML = "<h3>🗺️ True HD GRIB Map</h3><p>Maintenez la touche <b>Shift (Majuscule)</b> enfoncée, puis cliquez et glissez votre souris pour tracer la zone de sélection.</p>";
             mapEl.appendChild(textDiv);
             
             let zBox = document.createElement('div');
-            zBox.className = 'leaflet-zoom-box';
-            zBox.style.display = 'none';
+            zBox.className = 'leaflet-zoom-box'; zBox.style.display = 'none';
             mapEl.appendChild(zBox);
             
             let isDr = false; let sX, sY;
@@ -105,7 +92,7 @@
                 zBox.style.left = x+'px'; zBox.style.top = y+'px'; zBox.style.width = w+'px'; zBox.style.height = h+'px';
                 let sC = pToC(sX, sY), eC = pToC(cX, cY);
                 window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
-                document.getElementById('coords-display').innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
+                display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
             });
             mapEl.addEventListener('mouseup', function() { if (isDr) { isDr = false; checkReady(); } });
             return this;
@@ -146,7 +133,7 @@
             document.getElementById('btn-crop').disabled = true;
             
             const formData = new FormData();
-            formData.append('file', window.selectedFile[0]); // Correction d'index binaire pour la transmission directe
+            formData.append('file', window.selectedFile[0]);
             formData.append('bounds', JSON.stringify(window.currentBounds));
             formData.append('params', JSON.stringify(selectedParams));
 
