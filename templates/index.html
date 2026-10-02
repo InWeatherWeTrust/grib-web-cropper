@@ -48,15 +48,37 @@
     <script>
         !function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t="undefined"!=typeof globalThis?globalThis:t||self).L={})}(this,(function(t){"use strict";function e(t){var e,i,n,s;for(i=1,n=arguments.length;i<n;i++)for(e in s=arguments[i])t[e]=s[e];return t}var i=Object.create||function(){return function(t){return e.prototype=t,new e}}();function n(t){return Array.prototype.slice.call(arguments,1)}function s(t){return t._leaflet_id=t._leaflet_id||++o,t._leaflet_id}var o=0;t.version="1.9.4",t.extend=e,t.create=i,t.stamp=s}));
 
-        // Surcharge d'initialisation de la carte avec une image satellite HD convertie en texte brut (Base64)
+        // Initialisation de la carte avec une image vectorielle sécurisée intégrée en dur (Bypass CORS)
         L.map = function(id) {
             const mapEl = document.getElementById(id);
             mapEl.style.background = "#1e293b";
+            mapEl.style.position = "relative";
             
-            // Image géographique mondiale exacte intégrée directement dans le code HTML (Zéro chargement internet)
-            const mapImageBase64 = "data:image/svg+xml;utf8,<svg xmlns='http://w3.org' viewBox='0 0 360 180'><rect width='360' height='180' fill='%23111827'/><path d='M165,35 L170,32 L175,32 L180,36 L185,34 L190,38 L188,44 L180,42 L178,48 L172,46 L171,50 L166,48 L162,50 L164,54 L158,53 L156,48 L160,44 L158,40 L162,38 Z' fill='%23374151' stroke='%234b5563' stroke-width='0.5'/><path d='M162,50 L171,50 L178,48 L182,49 L188,52 L198,55 L200,62 L210,72 L215,82 L213,95 L208,110 L200,122 L195,120 L190,105 L182,90 L172,92 L162,82 L158,70 L156,60 L160,56 Z' fill='%231f2937' stroke='%23374151' stroke-width='0.5'/><path d='M30,20 L60,15 L80,20 L95,30 L90,45 L85,50 L75,48 L73,53 L66,57 L58,68 L50,70 L52,62 L42,55 L34,50 L30,35 Z' fill='%231f2937'/><path d='M66,57 L74,56 L82,60 L92,68 L102,78 L110,90 L108,105 L102,120 L92,135 L88,142 L85,140 L87,125 L82,110 L72,92 L66,78 Z' fill='%231f2937'/><path d='M190,38 L220,30 L260,28 L300,32 L315,40 L310,55 L300,70 L290,75 L280,72 L270,65 L255,75 L248,72 L245,62 L235,60 L220,65 L210,55 L200,50 L188,44 Z' fill='%231f2937'/><path d='M275,105 L300,102 L306,112 L296,125 L272,120 Z' fill='%231f2937'/></svg>";
+            // Chaîne propre encodée pour le fond de carte mondial autonome
+            const svgText = "<svg xmlns='http://w3.org' viewBox='0 0 360 180'><rect width='360' height='180' fill='%23111827'/><path d='M165,35 L170,32 L175,32 L180,36 L185,34 L190,38 L188,44 L180,42 L178,48 L172,46 L171,50 L166,48 L162,50 L164,54 L158,53 L156,48 L160,44 L158,40 L162,38 Z' fill='%23374151' stroke='%234b5563' stroke-width='0.5'/><path d='M162,50 L171,50 L178,48 L182,49 L188,52 L198,55 L200,62 L210,72 L215,82 L213,95 L208,110 L200,122 L195,120 L190,105 L182,90 L172,92 L162,82 L158,70 L156,60 L160,56 Z' fill='%231f2937' stroke='%23374151' stroke-width='0.5'/><path d='M30,20 L60,15 L80,20 L95,30 L90,45 L85,50 L75,48 L73,53 L66,57 L58,68 L50,70 L52,62 L42,55 L34,50 L30,35 Z' fill='%231f2937'/><path d='M66,57 L74,56 L82,60 L92,68 L102,78 L110,90 L108,105 L102,120 L92,135 L88,142 L85,140 L87,125 L82,110 L72,92 L66,78 Z' fill='%231f2937'/><path d='M190,38 L220,30 L260,28 L300,32 L315,40 L310,55 L300,70 L290,75 L280,72 L270,65 L255,75 L248,72 L245,62 L235,60 L220,65 L210,55 L200,50 L188,44 Z' fill='%231f2937'/><path d='M275,105 L300,102 L306,112 L296,125 L272,120 Z' fill='%231f2937'/></svg>";
+            const mapImageBase64 = "data:image/svg+xml;utf8," + svgText;
             
-            mapEl.innerHTML = `<div style='position:absolute; width:100%; height:100%; opacity:0.8; pointer-events:none; background-image:url("${mapImageBase64}"); background-size:100% 100%; z-index:1;'></div><div style='position:absolute; padding:20px; color:#fff; font-family:sans-serif; z-index:10; pointer-events:none;'><h3>🗺️ Vraie Carte GRIB Activée</h3><p>Maintenez la touche <b>Shift (Majuscule)</b> de votre clavier enfoncée, puis cliquez et glissez votre souris pour tracer votre rectangle de sélection météo.</p></div>`;
+            // Reconstruction de l'interface sans aucun conflit de guillemets
+            let bgDiv = document.createElement('div');
+            bgDiv.style.position = "absolute";
+            bgDiv.style.width = "100%";
+            bgDiv.style.height = "100%";
+            bgDiv.style.opacity = "0.8";
+            bgDiv.style.pointerEvents = "none";
+            bgDiv.style.backgroundImage = "url(\"" + mapImageBase64 + "\")";
+            bgDiv.style.backgroundSize = "100% 100%";
+            bgDiv.style.zIndex = "1";
+            mapEl.appendChild(bgDiv);
+            
+            let textDiv = document.createElement('div');
+            textDiv.style.position = "absolute";
+            textDiv.style.padding = "20px";
+            textDiv.style.color = "#fff";
+            textDiv.style.fontFamily = "sans-serif";
+            textDiv.style.zIndex = "10";
+            textDiv.style.pointerEvents = "none";
+            textDiv.innerHTML = "<h3>🗺️ Vraie Carte GRIB Activée</h3><p>Maintenez la touche <b>Shift (Majuscule)</b> de votre clavier enfoncée, puis cliquez et glissez votre souris pour tracer votre rectangle de sélection météo.</p>";
+            mapEl.appendChild(textDiv);
             
             let zBox = document.createElement('div');
             zBox.className = 'leaflet-zoom-box';
@@ -95,7 +117,7 @@
         L.map('map');
 
         document.getElementById('grib-file').addEventListener('change', function(e) {
-            window.selectedFile = e.target.files[0];
+            window.selectedFile = e.target.files;
             document.getElementById('status').innerText = "📂 Fichier sélectionné localement.";
         });
 
@@ -148,6 +170,3 @@
             });
         };
     </script>
-</body>
-</html>
-
