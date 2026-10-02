@@ -203,8 +203,10 @@
         };
 
         document.getElementById('grib-file').addEventListener('change', function(e) { 
-            window.selectedFile = e.target.files[0]; // Stockage de l'objet fichier natif
-            document.getElementById('status').innerText = "📂 Fichier prêt (" + (window.selectedFile.size / (1024*1024)).toFixed(1) + " Mo)"; 
+            window.selectedFile = e.target.files[0]; // Extraction directe du fichier physique
+            if(window.selectedFile) {
+                document.getElementById('status').innerText = "📂 Fichier prêt (" + (window.selectedFile.size / (1024*1024)).toFixed(1) + " Mo)"; 
+            }
         });
 
         document.getElementById('btn-load').addEventListener('click', function() {
@@ -221,7 +223,7 @@
             if (window.currentBounds && select.options.length > 0) { document.getElementById('btn-crop').disabled = false; }
         }
 
-        // SYSTÈME DE TRANSMISSION PAR MORCEAUX (Anti-blocage Proxy)
+        // SYSTÈME DE TRANSMISSION PAR CHUNKS SÉCURISÉ
         async function uploadFileInChunks(file) {
             const chunkSize = 5 * 1024 * 1024; // Tranches de 5 Mo
             const totalChunks = Math.ceil(file.size / chunkSize);
@@ -237,8 +239,9 @@
                 formData.append('chunkIndex', i);
                 formData.append('totalChunks', totalChunks);
                 
-                document.getElementById('progress-text').innerText = `Téléversement cloud : Morceau ${i+1}/${totalChunks}...`;
-                document.getElementById('progress-bar').value = Math.status = int(((i + 1) / totalChunks) * 30); // 30% alloués à l'upload
+                document.getElementById('progress-text').innerText = `Envoi cloud : Morceau ${i+1}/${totalChunks}...`;
+                // Progression visuelle de l'envoi calée de 0 à 30%
+                document.getElementById('progress-bar').value = Math.floor(((i + 1) / totalChunks) * 30);
                 
                 await fetch('/api/upload_chunk', { method: 'POST', body: formData });
             }
@@ -252,10 +255,10 @@
             document.getElementById('btn-crop').disabled = true;
             
             try {
-                // Étape A : Envoyer le fichier par petites tranches de 5 Mo sécurisées
+                // Étape 1 : Envoi sécurisé des morceaux de 5 Mo
                 await uploadFileInChunks(window.selectedFile);
                 
-                // Étape B : Lancer l'écouteur d'avancement pour la découpe pygrib réelle (de 30% à 100%)
+                // Étape 2 : Lancement du suivi de découpe (de 30% à 100%)
                 let progressInterval = setInterval(function() {
                     fetch('/api/progress').then(res => res.json()).then(data => {
                         let actualProgress = 30 + Math.floor(data.progress * 0.7);
@@ -264,7 +267,7 @@
                     });
                 }, 500);
 
-                // Étape C : Ordonner au serveur de traiter le fichier assemblé
+                // Étape 3 : Demande de découpe finale
                 fetch('/api/crop_chunked', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -274,13 +277,16 @@
                     clearInterval(progressInterval);
                     document.getElementById('progress-container').style.display = 'none';
                     document.getElementById('btn-crop').disabled = false;
-                    if (data.success) { window.location.href = data.download_url; } 
-                    else { alert("❌ Erreur : " + data.error); }
+                    if (data.success) { 
+                        window.location.href = data.download_url; 
+                    } else { 
+                        alert("❌ Erreur : " + data.error); 
+                    }
                 });
             } catch (err) {
                 document.getElementById('progress-container').style.display = 'none';
                 document.getElementById('btn-crop').disabled = false;
-                alert("❌ Erreur de transfert par morceaux.");
+                alert("❌ Échec lors de la transmission des morceaux.");
             }
         };
     </script>
