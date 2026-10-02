@@ -6,41 +6,42 @@ import urllib.request
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
 
-app = Flask(__name__)
+# Configuration explicite des dossiers pour Render
+current_dir = os.path.dirname(os.path.abspath(__file__))
+template_folder = os.path.join(current_dir, 'templates')
+static_folder = os.path.join(current_dir, 'static')
 
-# Configuration des dossiers de stockage de production
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
-STATIC_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
+app = Flask(__name__, template_folder=template_folder, static_folder=static_folder)
+
+UPLOAD_FOLDER = os.path.join(current_dir, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(STATIC_FOLDER, exist_ok=True)
+os.makedirs(static_folder, exist_ok=True)
 
 PROGRESS = 0
 
-def download_map_auto():
-    """Télécharge automatiquement la vraie carte HD sur le serveur cloud au démarrage"""
-    target_map = os.path.join(STATIC_FOLDER, "world_map.jpg")
-    if not os.path.exists(target_map):
-        print("⏳ Téléchargement automatique du fond de carte HD en cours...")
+def force_download_map():
+    """Télécharge l'image mondiale directement dans le dossier static interne du serveur"""
+    target_map = os.path.join(static_folder, "world_map.jpg")
+    if not os.path.exists(target_map) or os.path.getsize(target_map) < 10000:
         try:
-            # Contournement des restrictions SSL pour garantir le succès sur Render
             ctx = ssl._create_unverified_context()
             url = "https://wikimedia.org"
-            
-            # Simulation d'un navigateur internet humain pour éviter le blocage 403 Forbidden
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
             
             with urllib.request.urlopen(req, context=ctx) as response:
                 with open(target_map, "wb") as f:
                     f.write(response.read())
-            print("✅ Fond de carte HD installé avec succès sur le serveur !")
+            print("✅ Carte HD installée avec succès dans /static/world_map.jpg")
         except Exception as e:
-            print(f"⚠️ Erreur de téléchargement automatique : {e}")
+            print(f"⚠️ Erreur téléchargement carte : {e}")
 
-# Lancement du téléchargement autonome
-download_map_auto()
+# Lancement forcé au démarrage du script
+force_download_map()
 
 @app.route('/')
 def index():
+    # Double vérification de sécurité à chaque chargement de page
+    force_download_map()
     return render_template('index.html')
 
 @app.route('/api/progress', methods=['GET'])
