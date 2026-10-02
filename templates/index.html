@@ -2,11 +2,13 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Web Cropper Live HD</title>
+    <title>GRIB Web Cropper Pro - Local HD</title>
     <style>
-        body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
-        #sidebar { width: 350px; padding: 20px; display: flex; flex-direction: column; gap: 15px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; }
-        #map { flex: 1; height: 100%; background: #1e293b; position: relative; cursor: crosshair; }
+        body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; overflow: hidden; }
+        #sidebar { width: 350px; padding: 20px; display: flex; flex-direction: column; gap: 15px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; z-index: 10; }
+        #map-container { flex: 1; height: 100%; position: relative; background: #111827; }
+        #world-map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0.65; pointer-events: none; }
+        #grid-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; }
         button { background: #0ea5e9; color: white; border: none; padding: 12px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 14px; }
         button:hover { background: #0284c7; }
         button:disabled { background: #475569; cursor: not-allowed; }
@@ -14,16 +16,10 @@
         .coords { font-family: monospace; color: #34d399; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
         .progress-box { display: none; flex-direction: column; gap: 5px; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
         progress { width: 100%; height: 15px; accent-color: #0ea5e9; }
-        
-        /* Styles en dur requis pour le moteur cartographique interne */
-        .leaflet-container { overflow:hidden; position:relative; -webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none; }
-        .leaflet-pane { position:absolute; left:0; top:0; z-index:400; }
-        .leaflet-tile { position:absolute; left:0; top:0; filter:inherit; visibility:hidden; }
-        .leaflet-tile-loaded { visibility:inherit; }
-        .leaflet-zoom-box { width:0; height:0; border:2px dashed #0ea5e9; background:rgba(14,165,233,0.18); position:absolute; z-index:800; pointer-events:none; }
     </style>
 </head>
 <body>
+
     <div id="sidebar">
         <h2>📁 GRIB Web Selector</h2>
         <div style="display:flex; flex-direction:column; gap:5px;">
@@ -43,82 +39,110 @@
         <button id="btn-crop" disabled>💾 Découper & Télécharger</button>
     </div>
     
-    <div id="map"></div>
-        <!-- Noyau d'exécution cartographique intégré pour contourner les règles CORS de Render -->
+    <div id="map-container">
+        <!-- Insertion de la carte vectorielle directement dans la structure HTML de la page -->
+        <svg id="world-map" viewBox="0 0 360 180" preserveAspectRatio="none">
+            <!-- Europe de l'Ouest, France, Espagne, Italie -->
+            <path d="M165,35 L170,32 L175,32 L180,36 L185,34 L190,38 L188,44 L180,42 L178,48 L172,46 L171,50 L166,48 L162,50 L164,54 L158,53 L156,48 L160,44 L158,40 L162,38 Z" fill="#4b5563" stroke="#6b7280" stroke-width="0.4"/>
+            <!-- Continent Africain -->
+            <path d="M162,50 L171,50 L178,48 L182,49 L188,52 L198,55 L200,62 L210,72 L215,82 L213,95 L208,110 L200,122 L195,120 L190,105 L182,90 L172,92 L162,82 L158,70 L156,60 L160,56 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
+            <!-- Amérique du Nord -->
+            <path d="M30,20 L60,15 L80,20 L95,30 L90,45 L85,50 L75,48 L73,53 L66,57 L58,68 L50,70 L52,62 L42,55 L34,50 L30,35 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
+            <!-- Amérique du Sud -->
+            <path d="M66,57 L74,56 L82,60 L92,68 L102,78 L110,90 L108,105 L102,120 L92,135 L88,142 L85,140 L87,125 L82,110 L72,92 L66,78 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
+            <!-- Asie et Eurasie supérieure -->
+            <path d="M190,38 L220,30 L260,28 L300,32 L315,40 L310,55 L300,70 L290,75 L280,72 L270,65 L255,75 L248,72 L245,62 L235,60 L220,65 L210,55 L200,50 L188,44 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
+            <!-- Australie -->
+            <path d="M275,105 L300,102 L306,112 L296,125 L272,120 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
+        </svg>
+        <canvas id="grid-canvas"></canvas>
+    </div>
     <script>
-        !function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t="undefined"!=typeof globalThis?globalThis:t||self).L={})}(this,(function(t){"use strict";function e(t){var e,i,n,s;for(i=1,n=arguments.length;i<n;i++)for(e in s=arguments[i])t[e]=s[e];return t}var i=Object.create||function(){return function(t){return e.prototype=t,new e}}();function n(t){return Array.prototype.slice.call(arguments,1)}function s(t){return t._leaflet_id=t._leaflet_id||++o,t._leaflet_id}var o=0;t.version="1.9.4",t.extend=e,t.create=i,t.stamp=s}));
+        const canvas = document.getElementById('grid-canvas');
+        const ctx = canvas.getContext('2d');
+        const display = document.getElementById('coords-display');
 
-        // Initialisation de la carte avec une image vectorielle sécurisée intégrée en dur (Bypass CORS)
-        L.map = function(id) {
-            const mapEl = document.getElementById(id);
-            mapEl.style.background = "#1e293b";
-            mapEl.style.position = "relative";
-            
-            // Chaîne propre encodée pour le fond de carte mondial autonome
-            const svgText = "<svg xmlns='http://w3.org' viewBox='0 0 360 180'><rect width='360' height='180' fill='%23111827'/><path d='M165,35 L170,32 L175,32 L180,36 L185,34 L190,38 L188,44 L180,42 L178,48 L172,46 L171,50 L166,48 L162,50 L164,54 L158,53 L156,48 L160,44 L158,40 L162,38 Z' fill='%23374151' stroke='%234b5563' stroke-width='0.5'/><path d='M162,50 L171,50 L178,48 L182,49 L188,52 L198,55 L200,62 L210,72 L215,82 L213,95 L208,110 L200,122 L195,120 L190,105 L182,90 L172,92 L162,82 L158,70 L156,60 L160,56 Z' fill='%231f2937' stroke='%23374151' stroke-width='0.5'/><path d='M30,20 L60,15 L80,20 L95,30 L90,45 L85,50 L75,48 L73,53 L66,57 L58,68 L50,70 L52,62 L42,55 L34,50 L30,35 Z' fill='%231f2937'/><path d='M66,57 L74,56 L82,60 L92,68 L102,78 L110,90 L108,105 L102,120 L92,135 L88,142 L85,140 L87,125 L82,110 L72,92 L66,78 Z' fill='%231f2937'/><path d='M190,38 L220,30 L260,28 L300,32 L315,40 L310,55 L300,70 L290,75 L280,72 L270,65 L255,75 L248,72 L245,62 L235,60 L220,65 L210,55 L200,50 L188,44 Z' fill='%231f2937'/><path d='M275,105 L300,102 L306,112 L296,125 L272,120 Z' fill='%231f2937'/></svg>";
-            const mapImageBase64 = "data:image/svg+xml;utf8," + svgText;
-            
-            // Reconstruction de l'interface sans aucun conflit de guillemets
-            let bgDiv = document.createElement('div');
-            bgDiv.style.position = "absolute";
-            bgDiv.style.width = "100%";
-            bgDiv.style.height = "100%";
-            bgDiv.style.opacity = "0.8";
-            bgDiv.style.pointerEvents = "none";
-            bgDiv.style.backgroundImage = "url(\"" + mapImageBase64 + "\")";
-            bgDiv.style.backgroundSize = "100% 100%";
-            bgDiv.style.zIndex = "1";
-            mapEl.appendChild(bgDiv);
-            
-            let textDiv = document.createElement('div');
-            textDiv.style.position = "absolute";
-            textDiv.style.padding = "20px";
-            textDiv.style.color = "#fff";
-            textDiv.style.fontFamily = "sans-serif";
-            textDiv.style.zIndex = "10";
-            textDiv.style.pointerEvents = "none";
-            textDiv.innerHTML = "<h3>🗺️ Vraie Carte GRIB Activée</h3><p>Maintenez la touche <b>Shift (Majuscule)</b> de votre clavier enfoncée, puis cliquez et glissez votre souris pour tracer votre rectangle de sélection météo.</p>";
-            mapEl.appendChild(textDiv);
-            
-            let zBox = document.createElement('div');
-            zBox.className = 'leaflet-zoom-box';
-            zBox.style.display = 'none';
-            mapEl.appendChild(zBox);
-            
-            let isDr = false; let sX, sY;
-            function pToC(x,y) {
-                let lon = ((x / mapEl.offsetWidth) * 360) - 180;
-                let lat = 90 - ((y / mapEl.offsetHeight) * 180);
-                return { lat: parseFloat(lat.toFixed(2)), lon: parseFloat(lon.toFixed(2)) };
-            }
-            
-            mapEl.addEventListener('mousedown', function(e) {
-                if (!e.shiftKey) return; isDr = true;
-                const r = mapEl.getBoundingClientRect();
-                sX = e.clientX - r.left; sY = e.clientY - r.top;
-                zBox.style.left = sX+'px'; zBox.style.top = sY+'px';
-                zBox.style.width = '0px'; zBox.style.height = '0px'; zBox.style.display = 'block';
-            });
-            mapEl.addEventListener('mousemove', function(e) {
-                if (!isDr) return;
-                const r = mapEl.getBoundingClientRect();
-                let cX = e.clientX - r.left, cY = e.clientY - r.top;
-                let x = Math.min(sX, cX), y = Math.min(sY, cY), w = Math.abs(sX - cX), h = Math.abs(sY - cY);
-                zBox.style.left = x+'px'; zBox.style.top = y+'px'; zBox.style.width = w+'px'; zBox.style.height = h+'px';
-                let sC = pToC(sX, sY), eC = pToC(cX, cY);
-                window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
-                document.getElementById('coords-display').innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
-            });
-            mapEl.addEventListener('mouseup', function() { if (isDr) { isDr = false; checkReady(); } });
-            return this;
-        };
-
+        let isDrawing = false; let startX, startY, endX, endY;
         window.currentBounds = null; window.selectedFile = null;
-        L.map('map');
+
+        function pixelToCoords(x, y) {
+            let lon = ((x / canvas.width) * 360) - 180;
+            let lat = 90 - ((y / canvas.height) * 180);
+            return { lat: parseFloat(lat.toFixed(2)), lon: parseFloat(lon.toFixed(2)) };
+        }
+
+        function resizeCanvas() {
+            const container = document.getElementById('map-container');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            drawBackgroundGrid();
+        }
+
+        function drawBackgroundGrid() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Grille de coordonnées fine
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)'; 
+            ctx.lineWidth = 0.5;
+            for(let i=0; i<canvas.width; i+=45) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
+            for(let j=0; j<canvas.height; j+=45) { ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(canvas.width, j); ctx.stroke(); }
+            
+            // Équateur et Greenwich
+            ctx.strokeStyle = 'rgba(14, 165, 233, 0.4)'; 
+            ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width, canvas.height/2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
+        }
+
+        function drawSelectionBox() {
+            drawBackgroundGrid();
+            if (!isDrawing) return;
+
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 2;
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
+
+            let x = Math.min(startX, endX);
+            let y = Math.min(startY, endY);
+            let w = Math.abs(startX - endX);
+            let h = Math.abs(startY - endY);
+
+            ctx.fillRect(x, y, w, h);
+            ctx.strokeRect(x, y, w, h);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        setTimeout(resizeCanvas, 150);
+
+        canvas.addEventListener('mousedown', function(e) {
+            if (!e.shiftKey) return; 
+            isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            startX = e.clientX - rect.left;
+            startY = e.clientY - rect.top;
+            endX = startX;
+            endY = startY;
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            if (!isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            endX = e.clientX - rect.left;
+            endY = e.clientY - rect.top;
+
+            drawSelectionBox();
+
+            let sC = pixelToCoords(startX, startY); 
+            let eC = pixelToCoords(endX, endY);
+            window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
+            display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
+        });
+
+        canvas.addEventListener('mouseup', function() { if (isDrawing) { isDrawing = false; checkReady(); } });
 
         document.getElementById('grib-file').addEventListener('change', function(e) {
-            window.selectedFile = e.target.files;
-            document.getElementById('status').innerText = "📂 Fichier sélectionné localement.";
+            window.selectedFile = e.target.files[0];
+            document.getElementById('status').innerText = "📂 Fichier prêt localement.";
         });
 
         document.getElementById('btn-load').addEventListener('click', function() {
@@ -170,3 +194,5 @@
             });
         };
     </script>
+</body>
+</html>
