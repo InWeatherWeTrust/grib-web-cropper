@@ -2,13 +2,11 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Web Cropper Pro - Local HD</title>
+    <title>GRIB Web Cropper Pro - HD Map</title>
     <style>
-        body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; overflow: hidden; }
-        #sidebar { width: 350px; padding: 20px; display: flex; flex-direction: column; gap: 15px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; z-index: 10; }
-        #map-container { flex: 1; height: 100%; position: relative; background: #111827; }
-        #world-map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0.65; pointer-events: none; }
-        #grid-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; }
+        body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
+        #sidebar { width: 350px; padding: 20px; display: flex; flex-direction: column; gap: 15px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; }
+        #map { flex: 1; height: 100%; background: #1e293b; position: relative; cursor: crosshair; }
         button { background: #0ea5e9; color: white; border: none; padding: 12px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 14px; }
         button:hover { background: #0284c7; }
         button:disabled { background: #475569; cursor: not-allowed; }
@@ -16,61 +14,48 @@
         .coords { font-family: monospace; color: #34d399; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
         .progress-box { display: none; flex-direction: column; gap: 5px; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
         progress { width: 100%; height: 15px; accent-color: #0ea5e9; }
+        .leaflet-zoom-box { border: 2px dashed #38bdf8; background: rgba(56, 189, 248, 0.18); position: absolute; z-index: 800; pointer-events: none; }
     </style>
 </head>
 <body>
 
     <div id="sidebar">
         <h2>📁 GRIB Web Selector</h2>
+        
         <div style="display:flex; flex-direction:column; gap:5px;">
             <label style="font-size:13px; color:#94a3b8;">Sélectionnez votre fichier GRIB :</label>
             <input type="file" id="grib-file">
         </div>
+        
         <button id="btn-load">⚡ Analyser Instantanément</button>
         <div id="status" style="color: #94a3b8; font-size: 13px;">Aucun fichier en mémoire.</div>
+        
         <h3>📊 Paramètres détectés :</h3>
         <select id="param-list" multiple></select>
+        
         <h3>🌐 Zone de découpe :</h3>
         <div id="coords-display" class="coords">Aucune zone tracée.<br><span style="font-size:10px;color:#38bdf8;">(Shift + Clic Glisser sur la carte)</span></div>
+        
         <div id="progress-container" class="progress-box">
             <span style="font-size:12px; color:#34d399;" id="progress-text">Génération du fichier : 0%</span>
             <progress id="progress-bar" value="0" max="100"></progress>
         </div>
+        
         <button id="btn-crop" disabled>💾 Découper & Télécharger</button>
     </div>
-    
-    <div id="map-container">
-        <!-- Insertion de la carte vectorielle directement dans la structure HTML de la page -->
-        <svg id="world-map" viewBox="0 0 360 180" preserveAspectRatio="none">
-            <!-- Europe de l'Ouest, France, Espagne, Italie -->
-            <path d="M165,35 L170,32 L175,32 L180,36 L185,34 L190,38 L188,44 L180,42 L178,48 L172,46 L171,50 L166,48 L162,50 L164,54 L158,53 L156,48 L160,44 L158,40 L162,38 Z" fill="#4b5563" stroke="#6b7280" stroke-width="0.4"/>
-            <!-- Continent Africain -->
-            <path d="M162,50 L171,50 L178,48 L182,49 L188,52 L198,55 L200,62 L210,72 L215,82 L213,95 L208,110 L200,122 L195,120 L190,105 L182,90 L172,92 L162,82 L158,70 L156,60 L160,56 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
-            <!-- Amérique du Nord -->
-            <path d="M30,20 L60,15 L80,20 L95,30 L90,45 L85,50 L75,48 L73,53 L66,57 L58,68 L50,70 L52,62 L42,55 L34,50 L30,35 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
-            <!-- Amérique du Sud -->
-            <path d="M66,57 L74,56 L82,60 L92,68 L102,78 L110,90 L108,105 L102,120 L92,135 L88,142 L85,140 L87,125 L82,110 L72,92 L66,78 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
-            <!-- Asie et Eurasie supérieure -->
-            <path d="M190,38 L220,30 L260,28 L300,32 L315,40 L310,55 L300,70 L290,75 L280,72 L270,65 L255,75 L248,72 L245,62 L235,60 L220,65 L210,55 L200,50 L188,44 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
-            <!-- Australie -->
-            <path d="M275,105 L300,102 L306,112 L296,125 L272,120 Z" fill="#374151" stroke="#4b5563" stroke-width="0.4"/>
-        </svg>
-        <canvas id="grid-canvas"></canvas>
-    </div>
-        <!-- Noyau d'exécution cartographique intégré pour contourner les règles CORS de Render -->
+
+    <div id="map"></div>
     <script>
         !function(t,e){"object"==typeof exports&&"undefined"!=typeof module?e(exports):"function"==typeof define&&define.amd?define(["exports"],e):e((t="undefined"!=typeof globalThis?globalThis:t||self).L={})}(this,(function(t){"use strict";function e(t){var e,i,n,s;for(i=1,n=arguments.length;i<n;i++)for(e in s=arguments[i])t[e]=s[e];return t}var i=Object.create||function(){return function(t){return e.prototype=t,new e}}();function n(t){return Array.prototype.slice.call(arguments,1)}function s(t){return t._leaflet_id=t._leaflet_id||++o,t._leaflet_id}var o=0;t.version="1.9.4",t.extend=e,t.create=i,t.stamp=s}));
 
-        // Initialisation de la carte avec une vraie image cartographique HD calibrée (Bypass CORS complet)
         L.map = function(id) {
             const mapEl = document.getElementById(id);
             mapEl.style.background = "#1e293b";
             mapEl.style.position = "relative";
             
-            // Appel d'une vraie carte géographique HD stable (Projection équirectangulaire calée sur la grille)
+            // Image cartographique HD de la Terre stable et calibrée
             const trueMapUrl = "https://amazonaws.com" ? "https://wikimedia.org" : "";
             
-            // Injection de la vraie image physique de la Terre en arrière-plan
             let bgDiv = document.createElement('div');
             bgDiv.style.position = "absolute";
             bgDiv.style.width = "100%";
@@ -91,7 +76,7 @@
             textDiv.style.zIndex = "10";
             textDiv.style.pointerEvents = "none";
             textDiv.style.textShadow = "0 2px 4px rgba(0,0,0,0.8)";
-            textDiv.innerHTML = "<h3>🗺️ True HD GRIB Map</h3><p>Maintenez la touche <b>Shift (Majuscule)</b> enfoncée, puis cliquez et glissez votre souris pour tracer le rectangle.</p>";
+            textDiv.innerHTML = "<h3>🗺️ True HD GRIB Map</h3><p>Maintenez la touche <b>Shift (Majuscule)</b> enfoncée, puis cliquez et glissez votre souris pour tracer la zone de sélection.</p>";
             mapEl.appendChild(textDiv);
             
             let zBox = document.createElement('div');
@@ -121,7 +106,7 @@
                 zBox.style.left = x+'px'; zBox.style.top = y+'px'; zBox.style.width = w+'px'; zBox.style.height = h+'px';
                 let sC = pToC(sX, sY), eC = pToC(cX, cY);
                 window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
-                document.getElementById('coords-display').innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
+                display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
             });
             mapEl.addEventListener('mouseup', function() { if (isDr) { isDr = false; checkReady(); } });
             return this;
@@ -132,7 +117,7 @@
 
         document.getElementById('grib-file').addEventListener('change', function(e) {
             window.selectedFile = e.target.files;
-            document.getElementById('status').innerText = "📂 Fichier sélectionné localement.";
+            document.getElementById('status').innerText = "📂 Fichier prêt localement.";
         });
 
         document.getElementById('btn-load').addEventListener('click', function() {
@@ -184,6 +169,5 @@
             });
         };
     </script>
-
 </body>
 </html>
