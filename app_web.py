@@ -3,46 +3,47 @@ import os
 import json
 import ssl
 import urllib.request
+import base64
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
 
-# Configuration explicite des dossiers pour Render
-current_dir = os.path.dirname(os.path.abspath(__file__))
-template_folder = os.path.join(current_dir, 'templates')
-static_folder = os.path.join(current_dir, 'static')
+app = Flask(__name__)
 
-app = Flask(__name__, template_folder=template_folder, static_folder=static_folder)
-
-UPLOAD_FOLDER = os.path.join(current_dir, 'uploads')
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(static_folder, exist_ok=True)
 
 PROGRESS = 0
+MAP_BASE64_DATA = ""
 
-def force_download_map():
-    """Télécharge l'image mondiale directement dans le dossier static interne du serveur"""
-    target_map = os.path.join(static_folder, "world_map.jpg")
-    if not os.path.exists(target_map) or os.path.getsize(target_map) < 10000:
-        try:
-            ctx = ssl._create_unverified_context()
-            url = "https://wikimedia.org"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-            
-            with urllib.request.urlopen(req, context=ctx) as response:
-                with open(target_map, "wb") as f:
-                    f.write(response.read())
-            print("✅ Carte HD installée avec succès dans /static/world_map.jpg")
-        except Exception as e:
-            print(f"⚠️ Erreur téléchargement carte : {e}")
+def fetch_map_to_base64():
+    """Télécharge l'image HD en mémoire et la convertit en texte Base64 pour contourner les bugs de fichiers de Render"""
+    global MAP_BASE64_DATA
+    try:
+        ctx = ssl._create_unverified_context()
+        url = "https://wikimedia.org"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        
+        with urllib.request.urlopen(req, context=ctx) as response:
+            binary_data = response.read()
+            # Encodage en texte Base64 propre
+            encoded = base64.b64encode(binary_data).decode('utf-8')
+            MAP_BASE64_DATA = f"data:image/jpeg;base64,{encoded}"
+        print("✅ Fond de carte HD converti en mémoire avec succès !")
+    except Exception as e:
+        print(f"⚠️ Erreur conversion mémoire carte : {e}")
+        # En cas de coupure réseau, secours vectoriel léger pour ne pas laisser l'écran noir
+        MAP_BASE64_DATA = "data:image/svg+xml;utf8,<svg xmlns='http://w3.org' viewBox='0 0 360 180'><rect width='360' height='180' fill='%230f172a'/><path d='M165,35 L190,38 L188,44 L178,48 L162,50 L158,53 L160,44 Z' fill='%23334155'/></svg>"
 
-# Lancement forcé au démarrage du script
-force_download_map()
+# Téléchargement initial en mémoire
+fetch_map_to_base64()
 
 @app.route('/')
 def index():
-    # Double vérification de sécurité à chaque chargement de page
-    force_download_map()
-    return render_template('index.html')
+    global MAP_BASE64_DATA
+    if not MAP_BASE64_DATA or "jpeg" not in MAP_BASE64_DATA:
+        fetch_map_to_base64()
+    # Injection directe de la carte sous forme de variable textuelle dans le HTML
+    return render_template('index.html', map_data_raw=MAP_BASE64_DATA)
 
 @app.route('/api/progress', methods=['GET'])
 def get_progress():
