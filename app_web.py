@@ -2,10 +2,8 @@ import sys
 import os
 import json
 import shutil
-import urllib.request
-import ssl
-from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
+from ecmwf.opendata import Client
 import pygrib
 
 app = Flask(__name__)
@@ -15,26 +13,6 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
-
-def get_ecmwf_request(step_val):
-    """Construit une requête HTTP sécurisée par IP directe (Zéro appel DNS)"""
-    # Calcul dynamique de la date d'hier au format AAAAMMJJ
-    yesterday = datetime.now() - timedelta(days=1)
-    date_str = yesterday.strftime("%Y%m%d")
-    step_str = f"{step_val:03d}"
-    
-    # ADRESSE IP BRUTE OFFICIELLE DE DATA.ECMWF.INT (Vérifiée 2026)
-    ecmwf_static_ip = "136.156.129.245"
-    
-    # Création de l'URL par IP pour court-circuiter le DNS défaillant de Render
-    url = f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
-    
-    req = urllib.request.Request(url)
-    # TRÈS IMPORTANT : On injecte l'en-tête Host pour que l'ECMWF accepte la liaison par IP
-    req.add_header('Host', 'data.ecmwf.int')
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    req.add_header('Connection', 'close')
-    return req
 
 @app.route('/')
 def index():
@@ -56,10 +34,11 @@ def clean_server_dir():
 
 @app.route('/api/scan_ecmwf', methods=['POST'])
 def scan_ecmwf():
+    """Utilise l'API officielle pour télécharger le premier pas horaire et en lire les paramètres réels"""
     data = request.json
     selected_steps = data.get("steps", [])
     if not selected_steps:
-        return jsonify({"error": "Veuillez cocher au moins une échéance pour l'analyse."}), 400
+        return jsonify({"error": "Veuillez cocher au moins une échéance."}), 400
         
     steps_ints = sorted([int(s) for s in selected_steps])
     first_step = steps_ints[0]
@@ -70,12 +49,17 @@ def scan_ecmwf():
     if os.path.exists(scan_path): os.remove(scan_path)
     
     try:
-        ctx = ssl._create_unverified_context()
-        req = get_ecmwf_request(first_step)
-        
-        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-            with open(scan_path, "wb") as f:
-                f.write(response.read())
+        # L'API officielle gère le contournement des pare-feu d'hébergeurs
+        client = Client(source="ecmwf")
+        client.retrieve(
+            date=-1,
+            time="00",
+            step=first_step,
+            stream="oper",
+            type="fc",
+            levtype="sfc", # On cible le fichier de surface (sfc) qui contient le vent et la pression msl
+            target=scan_path
+        )
                 
         fin = pygrib.open(scan_path)
         params_set = set()
@@ -105,7 +89,7 @@ def scan_ecmwf():
         
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès par routage direct IP : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur d'accès via l'API officielle : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -132,19 +116,26 @@ def fetch_and_crop():
     if os.path.exists(output_path): os.remove(output_path)
     
     try:
-        ctx = ssl._create_unverified_context()
+        client = Client(source="ecmwf")
         
         with open(output_path, "wb") as fout:
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                req = get_ecmwf_request(step_val)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_step_{step_val}.grib2")
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    with urllib.request.urlopen(req, context=ctx, timeout=35) as response:
-                        with open(chunk_raw_path, "wb") as f:
-                            f.write(response.read())
+                    # Extraction séquentielle par l'API officielle
+                    client.retrieve(
+                        date=-1,
+                        time="00",
+                        step=step_val,
+                        stream="oper",
+                        type="fc",
+                        levtype="sfc",
+                        target=chunk_raw_path
+                    )
                             
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
