@@ -1,4 +1,3 @@
 Flask
 pygrib
 gunicorn
-ecmwf-opendata
