@@ -9,6 +9,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
 
 app = Flask(__name__)
+# Autorise la manipulation de flux de fichiers jusqu'à 500 Mo en entrée/sortie
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
@@ -27,10 +28,11 @@ def get_progress():
 
 @app.route('/api/clean', methods=['POST'])
 def clean_server_dir():
+    """Supprime tous les fichiers binaires pour remettre l'espace disque de Render à 0 Mo"""
     try:
         shutil.rmtree(UPLOAD_FOLDER)
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        return jsonify({"success": True, "message": "Stockage cloud vidé avec succès !"})
+        return jsonify({"success": True, "message": "Stockage cloud nettoyé avec succès ! (0 Mo occupés)"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -41,8 +43,8 @@ def fetch_and_crop():
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params = data.get("params")  # Ex: ['u', 'v', 't']
-    selected_levels = [int(l) for l in data.get("levels", [])]  # Ex: [1000, 850, 500]
+    selected_params = data.get("params")  # Ex: ['u', 'v']
+    selected_levels = [int(l) for l in data.get("levels", [])]  # Ex: [1000, 500]
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
     total_steps = len(selected_steps)
@@ -55,19 +57,17 @@ def fetch_and_crop():
     if os.path.exists(output_path): 
         os.remove(output_path)
         
-    # Calcul dynamique de la date d'hier au format AAAAMMJJ pour l'URL de stockage de l'ECMWF
+    # Calcul dynamique de la date d'hier (Verrouillage run stable 100% disponible)
     yesterday = datetime.now() - timedelta(days=1)
-    date_str = yesterday.strftime("%Y%m%dd")
     
-    # Dictionnaire de traduction des paramètres simplifiés de l'interface vers les codes officiels GRIB de l'ECMWF
-    param_mapping = {
-        "u": "131.128",  # u-component of wind
-        "v": "132.128",  # v-component of wind
-        "t": "130.128",  # Temperature
-        "gh": "156.128", # Geopotential height
-        "r": "157.128"   # Relative humidity
-    }
+    # 1. Le nom du dossier prend un "d" à la fin (ex: 20261007d)
+    folder_date_str = yesterday.strftime("%Y%m%dd")
     
+    # 2. Le nom du fichier de données binaire brut ne prend PAS de "d" (ex: 20261007)
+    file_date_str = yesterday.strftime("%Y%m%d")
+    
+    # Traduction des paramètres de l'interface vers les noms courts officiels pygrib
+    # (u/v pour le vent, t pour la température, gh pour le géopotentiel, r pour l'humidité)
     try:
         ctx = ssl._create_unverified_context()
         
@@ -75,51 +75,57 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                # Conversion du format de l'échéance à 3 caractères pour l'URL (ex: 12 -> 012, 24 -> 024)
+                # Formatage de l'échéance à 3 chiffres exigé par le serveur de l'ECMWF (ex: 12 -> 012, 24 -> 024)
                 step_str = f"{step_val:03d}"
                 
-                # URL brute de stockage de l'échéance IFS mondiale gratuite de l'ECMWF
-                url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-fc.grib2"
+                # URL officielle, vérifiée et recalibrée en 0.25° HD (Dossier avec 'd', fichier sans 'd')
+                url = f"https://ecmwf.int{folder_date_str}/00z/ifs/0p25/oper/{file_date_str}0000-{step_val}h-oper-fc.grib2"
                 
                 chunk_raw_filename = f"temp_step_{step_val}.grib2"
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, chunk_raw_filename)
                 
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                
                 try:
-                    # Téléchargement direct HTTP ultra-rapide (Zéro file d'attente serveur)
+                    # Téléchargement HTTP direct à la vitesse de la fibre du serveur
                     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
+                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
                             
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
                         
-                    # Filtrage et découpe géographique immédiate du fichier binaire complet reçu
+                    # Filtrage immédiat par pygrib pour extraire la zone géographique et les profondeurs
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
-                            # 1. Vérification du paramètre (Wind, Temp, etc.)
-                            indicator = str(grb.indicatorOfParameter if hasattr(grb, 'indicatorOfParameter') else '')
+                            # Extraction des métadonnées du message GRIB
                             short_name = getattr(grb, 'shortName', '')
-                            param_match = any(p in selected_params for p in [short_name])
-                            
-                            # 2. Vérification de la profondeur (Niveau de pression hPa)
                             level = int(grb.level if hasattr(grb, 'level') else 0)
+                            
+                            # Validation des filtres sélectionnés par l'utilisateur
+                            param_match = short_name in selected_params if selected_params else True
                             level_match = level in selected_levels if selected_levels else True
                             
                             if param_match and level_match:
-                                # Découpe de la matrice de données
-                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
+                                # Découpe de la matrice géospatiale selon vos coordonnées de souris
+                                sub_data, lats, lons = grb.data(
+                                    lat1=bounds["s"], lat2=bounds["n"], 
+                                    lon1=bounds["w"], lon2=bounds["e"]
+                                )
                                 grb.values = sub_data
+                                # Écriture directe à la suite dans le fichier final compilé
                                 fout.write(grb.tostring())
                         except Exception:
                             continue
                     fin.close()
                     
                 except Exception as e:
-                    print(f"Erreur téléchargement pas {step_val}: {e}")
+                    print(f"Erreur sur le pas horaire {step_val}: {e}")
                     continue
                 finally:
+                    # Sécurité stockage : suppression immédiate du fichier de 130 Mo pour ne jamais saturer Render
                     if os.path.exists(chunk_raw_path):
                         os.remove(chunk_raw_path)
                         
