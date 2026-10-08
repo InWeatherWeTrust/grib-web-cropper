@@ -2,8 +2,9 @@ import sys
 import os
 import json
 import shutil
+import gc
 from flask import Flask, render_template, request, jsonify, send_file
-from ecmwf.opendata import Client
+import ecmwf.opendata
 import pygrib
 
 app = Flask(__name__)
@@ -35,12 +36,12 @@ def clean_server_dir():
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
     global PROGRESS
-    PROGRESS = 10
+    PROGRESS = 5
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params = data.get("params")  # Ex: ['u', 'v']
-    selected_levels = [str(l) for l in data.get("levels", [])]  # L'API ECMWF exige des chaînes pour les niveaux
+    selected_params = data.get("params")
+    selected_levels = [str(l) for l in data.get("levels", [])]
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
     total_steps = len(selected_steps)
@@ -54,10 +55,8 @@ def fetch_and_crop():
         os.remove(output_path)
         
     try:
-        # Initialisation unique du client officiel de l'ECMWF
-        client = Client(source="ecmwf")
-        
         with open(output_path, "wb") as fout:
+            # BOUCLE D'ISOLATION COMPLETE : Chaque échéance possède son propre canal éphémère
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
@@ -67,23 +66,30 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    # L'API officielle va chercher le fichier de manière stable sans erreur 404
+                    # ON FORCE LA CRÉATION D'UN CLIENT NEUF À CHAQUE TOUR DE BOUCLE
+                    # Cela brise l'état de persistance qui gelait la connexion de l'ECMWF
+                    client = ecmwf.opendata.Client(source="ecmwf")
+                    
                     client.retrieve(
-                        date=-1,                # Verrouillage sur le run complet de la veille
-                        time="00",              # Run de minuit UTC
-                        step=step_val,          # Une seule échéance à la fois pour ne pas saturer la RAM
+                        date=-1,
+                        time="00",
+                        step=step_val,
                         stream="oper",
                         type="fc",
-                        levtype="pl",           # Pressure levels
+                        levtype="pl",
                         levelist=selected_levels,
                         param=selected_params,
                         target=chunk_raw_path
                     )
                     
+                    # DESTRUCTION FORCÉE IMMÉDIATE DU CLIENT APRÈS TÉLÉCHARGEMENT
+                    del client
+                    gc.collect() # Appel du nettoyeur de mémoire agressif de Python
+                    
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
                         
-                    # Découpe géospatiale immédiate avec pygrib
+                    # Découpe géospatiale du morceau par pygrib
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
@@ -98,7 +104,7 @@ def fetch_and_crop():
                     fin.close()
                     
                 except Exception as e:
-                    print(f"Erreur sur l'échéance {step_val}: {e}")
+                    print(f"Erreur sur le pas {step_val}: {e}")
                     continue
                 finally:
                     if os.path.exists(chunk_raw_path):
@@ -106,16 +112,15 @@ def fetch_and_crop():
                         
         PROGRESS = 100
         
-        # Sécurité finale : si aucune donnée n'a été écrite, on lève une erreur explicite
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite pour ces critères."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite."}), 400
             
         return jsonify({"success": True, "download_url": f"/api/download/{output_filename}"})
         
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur lors du traitement : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur lors du traitement séquentiel : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
