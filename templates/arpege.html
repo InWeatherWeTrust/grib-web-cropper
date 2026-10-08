@@ -27,15 +27,16 @@
 <body>
 
     <div id="sidebar">
-        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px; color: #f43f5e;">⚡ ARPEGE Europe 0.25°</h2>
+        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px; color: #f43f5e;">⚡ ARPEGE Monde 0.25°</h2>
         <div id="status" style="color: #94a3b8; font-size: 11px; margin-bottom: 5px;">Sélectionnez vos échéances puis lancez l'analyse Météo-France.</div>
         
-        <h3>⏱️ 1. Échéances ARPEGE :</h3>
+        <!-- NOUVELLE GRILLE CALIBRÉE EN PAS DE 12H JUSQU'À 72H MAX -->
+        <h3>⏱️ 1. Échéances ARPEGE (Pas de 12h) :</h3>
         <div class="step-grid" id="step-container">
-            <label class="step-item"><input type="checkbox" value="3" checked> +03h</label>
-            <label class="step-item"><input type="checkbox" value="6" checked> +06h</label>
-            <label class="step-item"><input type="checkbox" value="12"> +12h</label>
-            <label class="step-item"><input type="checkbox" value="24"> +24h</label>
+            <label class="step-item"><input type="checkbox" value="12" checked> +12h (Jour 1)</label>
+            <label class="step-item"><input type="checkbox" value="24" checked> +24h (Jour 1)</label>
+            <label class="step-item"><input type="checkbox" value="48"> +48h (Jour 2)</label>
+            <label class="step-item"><input type="checkbox" value="72"> +72h (Jour 3 max)</label>
         </div>
         <button id="btn-scan" style="margin-top: 5px; background: #f59e0b; color: #000; font-weight: bold;">🔍 Scan de l'entête Météo-France</button>
 
@@ -72,6 +73,7 @@
         <canvas id="grid-canvas"></canvas>
         <div id="selection-box" class="leaflet-zoom-box" style="display:none;"></div>
     </div>
+
     <script>
         const canvas = document.getElementById('grid-canvas'); const ctx = canvas.getContext('2d');
         const mapCanvas = document.getElementById('map-background'); const mctx = mapCanvas.getContext('2d');
