@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Cloud Cropper - Dynamic Scan Edition</title>
+    <title>GRIB Cloud Cropper - Multi-Mode Edition</title>
     <style>
         body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
         #sidebar { width: 420px; padding: 20px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; overflow-y: auto; }
@@ -28,10 +28,16 @@
 <body>
 
     <div id="sidebar">
-        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px;">🌐 GRIB Dynamic Cropper</h2>
-        <div id="status" style="color: #94a3b8; font-size: 11px;">Sélectionnez vos échéances puis lancez le scan.</div>
+        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px;">🌐 GRIB Cloud Cropper</h2>
+        <div id="status" style="color: #94a3b8; font-size: 11px;">Configurez le type de données puis lancez le scan.</div>
         
-        <h3>⏱️ 1. Échéances à scanner :</h3>
+        <h3>⚙️ Type de Données GRIB :</h3>
+        <select id="mode-select" style="border: 1px solid #0ea5e9; font-weight: bold; color: #0ea5e9;">
+            <option value="sfc" selected>🌍 MODE SURFACE (Vent à 10m, Pression MSL, etc.)</option>
+            <option value="pl">🌬️ MODE ALTITUDE (Pression, Vents verticaux hPa, etc.)</option>
+        </select>
+
+        <h3>⏱️ 1. Échéances :</h3>
         <div class="step-grid" id="step-container">
             <label class="step-item"><input type="checkbox" value="12" checked> +12h</label>
             <label class="step-item"><input type="checkbox" value="24" checked> +24h</label>
@@ -43,7 +49,7 @@
         <h3>📊 2. Paramètres détectés :</h3>
         <select id="param-list" multiple><option disabled>En attente du scan...</option></select>
 
-        <h3>📉 3. Profondeurs détectées (Niveaux) :</h3>
+        <h3>📉 3. Profondeurs détectées :</h3>
         <select id="level-list" multiple><option disabled>En attente du scan...</option></select>
 
         <h3>💾 4. Zones Favorites :</h3>
@@ -173,25 +179,29 @@
         document.getElementById('btn-scan').onclick = function() {
             const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
             const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
+            const mode = document.getElementById('mode-select').value;
             if(selectedSteps.length === 0) { alert("⚠️ Cochez au moins une échéance."); return; }
             
-            document.getElementById('status').innerText = "⏳ Analyse en cours à l'ECMWF...";
+            document.getElementById('status').innerText = "⏳ Analyse du catalogue en cours...";
             document.getElementById('btn-scan').disabled = true;
 
             fetch('/api/scan_ecmwf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ steps: selectedSteps })
+                body: JSON.stringify({ steps: selectedSteps, levtype: mode })
             })
             .then(res => res.json()).then(data => {
                 document.getElementById('btn-scan').disabled = false;
                 if(data.error) { document.getElementById('status').innerText = "❌ " + data.error; }
                 else {
-                    document.getElementById('status').innerText = "✅ Analyse réussie !";
+                    document.getElementById('status').innerText = "✅ Scan réussi !";
                     const pList = document.getElementById('param-list'); pList.innerHTML = "";
                     data.params.forEach(p => { let o = document.createElement('option'); o.value = p; o.innerText = p; pList.appendChild(o); });
                     const lList = document.getElementById('level-list'); lList.innerHTML = "";
-                    data.levels.forEach(l => { let o = document.createElement('option'); o.value = l; o.innerText = l === 0 ? "0 (Surface)" : `${l} hPa`; lList.appendChild(o); });
+                    data.levels.forEach(l => { 
+                        let o = document.createElement('option'); o.value = l; 
+                        o.innerText = l === 0 ? "0 (Surface / Mer)" : `${l} hPa`; lList.appendChild(o); 
+                    });
                     checkReady();
                 }
             }).catch(() => { document.getElementById('status').innerText = "❌ Erreur de liaison cloud."; document.getElementById('btn-scan').disabled = false; });
@@ -211,6 +221,7 @@
             const selectedLevels = Array.from(document.getElementById('level-list').selectedOptions).map(opt => opt.value);
             const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
             const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
+            const mode = document.getElementById('mode-select').value;
 
             document.getElementById('progress-container').style.display = 'flex';
             document.getElementById('btn-crop').disabled = true;
@@ -225,7 +236,7 @@
             fetch('/api/fetch_and_crop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps })
+                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps, levtype: mode })
             })
             .then(res => res.json()).then(data => {
                 clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
