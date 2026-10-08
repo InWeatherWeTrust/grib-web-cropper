@@ -150,11 +150,12 @@
         }
 
         window.addEventListener('resize', resizeCanvas); setTimeout(resizeCanvas, 100);
-        canvas.addEventListener('mousedown', function(e) {
+                canvas.addEventListener('mousedown', function(e) {
             if (!e.shiftKey) return; isDrawing = true;
             const rect = canvas.getBoundingClientRect();
             startX = e.clientX - rect.left; startY = e.clientY - rect.top; endX = startX; endY = startY;
         });
+
         canvas.addEventListener('mousemove', function(e) {
             if (!isDrawing) return;
             const rect = canvas.getBoundingClientRect();
@@ -165,6 +166,7 @@
             display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
             checkReady();
         });
+
         canvas.addEventListener('mouseup', function() { if (isDrawing) isDrawing = false; });
 
         document.getElementById('btn-load-fav').onclick = function() {
@@ -176,16 +178,18 @@
             isDrawing = true; drawSelectionBox(); isDrawing = false; checkReady();
         };
 
+        // CORRECTION DE L'URL AVEC LE PRÉFIXE /CEP POUR L'ANALYSE DYNAMIQUE
         document.getElementById('btn-scan').onclick = function() {
             const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
             const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
             const mode = document.getElementById('mode-select').value;
+            
             if(selectedSteps.length === 0) { alert("⚠️ Cochez au moins une échéance."); return; }
             
             document.getElementById('status').innerText = "⏳ Analyse du catalogue en cours...";
             document.getElementById('btn-scan').disabled = true;
 
-            fetch('/api/scan_ecmwf', {
+            fetch('/cep/api/scan_ecmwf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ steps: selectedSteps, levtype: mode })
@@ -195,12 +199,15 @@
                 if(data.error) { document.getElementById('status').innerText = "❌ " + data.error; }
                 else {
                     document.getElementById('status').innerText = "✅ Scan réussi !";
+                    
                     const pList = document.getElementById('param-list'); pList.innerHTML = "";
                     data.params.forEach(p => { let o = document.createElement('option'); o.value = p; o.innerText = p; pList.appendChild(o); });
+                    
                     const lList = document.getElementById('level-list'); lList.innerHTML = "";
                     data.levels.forEach(l => { 
                         let o = document.createElement('option'); o.value = l; 
-                        o.innerText = l === 0 ? "0 (Surface / Mer)" : `${l} hPa`; lList.appendChild(o); 
+                        o.innerText = l === 0 ? "0 (Surface / Mer)" : `${l} hPa`; 
+                        lList.appendChild(o); 
                     });
                     checkReady();
                 }
@@ -216,6 +223,7 @@
         document.getElementById('param-list').onchange = checkReady;
         document.getElementById('level-list').onchange = checkReady;
 
+        // CORRECTION DE L'URL AVEC LE PRÉFIXE /CEP POUR L'EXTRACTION FINALE
         document.getElementById('btn-crop').onclick = function() {
             const selectedParams = Array.from(document.getElementById('param-list').selectedOptions).map(opt => opt.value);
             const selectedLevels = Array.from(document.getElementById('level-list').selectedOptions).map(opt => opt.value);
@@ -227,13 +235,13 @@
             document.getElementById('btn-crop').disabled = true;
             
             let progressInterval = setInterval(function() {
-                fetch('/api/progress').then(res => res.json()).then(data => {
+                fetch('/cep/api/progress').then(res => res.json()).then(data => {
                     document.getElementById('progress-bar').value = data.progress;
                     document.getElementById('progress-text').innerText = "Extraction cloud en cours : " + data.progress + "%";
                 });
             }, 500);
 
-            fetch('/api/fetch_and_crop', {
+            fetch('/cep/api/fetch_and_crop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps, levtype: mode })
@@ -246,3 +254,4 @@
     </script>
 </body>
 </html>
+
