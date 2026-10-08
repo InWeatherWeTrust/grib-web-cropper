@@ -19,25 +19,16 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_arpege_request(step_val):
-    """Construit une requête HTTP sécurisée par IP directe vers Météo-France (Zéro appel DNS)"""
+def get_arpege_url(step_val):
+    """Calcule l'URL exacte sur le miroir cloud universel AWS de Météo-France"""
+    # Météo-France pousse ses fichiers sur AWS à la vitesse de l'éclair
     now = datetime.utcnow()
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # ADRESSE IP FIXE OFFICIELLE DE DATA.METEO.FR
-    meteo_static_ip = "193.56.241.52"
-    
-    # Construction de l'URL par IP brute pour court-circuiter le DNS bloqué de Render
-    url = f"https://{meteo_static_ip}/forms/productions/open-data/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
-    
-    req = urllib.request.Request(url)
-    # Injection de l'en-tête d'identité obligatoire pour que Météo-France valide la session
-    req.add_header('Host', 'data.meteo.fr')
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    req.add_header('Connection', 'close')
-    return req
+    # URL SUR LE REPERTOIRE DE STOCKAGE PUBLIC UNIVERSEL MÉTÉO-FRANCE SUR AWS (Zéro blocage)
+    return f"https://scw.cloud{date_str}0000-{step_str}h-oper.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -59,13 +50,13 @@ def scan_arpege():
     steps_ints = sorted([int(s) for s in selected_steps])
     first_step = steps_ints[0]
     
+    url = get_arpege_url(first_step)
     scan_path = os.path.join(UPLOAD_FOLDER, f"scan_arpege_{first_step}.grib2")
     if os.path.exists(scan_path): os.remove(scan_path)
     
     try:
         ctx = ssl._create_unverified_context()
-        req = get_arpege_request(first_step)
-        
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
         with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
             with open(scan_path, "wb") as f:
                 f.write(response.read())
@@ -93,7 +84,7 @@ def scan_arpege():
         return jsonify({"success": True, "params": sorted(list(params_set)), "levels": sorted(list(levels_set))})
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès par routage direct IP Météo-France : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur de liaison Miroir Météo-France : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -120,10 +111,11 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                req = get_arpege_request(step_val)
+                url = get_arpege_url(step_val)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 
                 try:
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
                     with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
