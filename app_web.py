@@ -2,9 +2,10 @@ import sys
 import os
 import json
 import shutil
-import gc
+import urllib.request
+import ssl
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
-import ecmwf.opendata
 import pygrib
 
 app = Flask(__name__)
@@ -40,8 +41,8 @@ def fetch_and_crop():
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params = data.get("params")
-    selected_levels = [str(l) for l in data.get("levels", [])]
+    selected_params = data.get("params")  # Ex: ['u', 'v']
+    selected_levels = [int(l) for l in data.get("levels", [])]  # Ex: [1000, 850]
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
     total_steps = len(selected_steps)
@@ -54,11 +55,24 @@ def fetch_and_crop():
     if os.path.exists(output_path): 
         os.remove(output_path)
         
+    # Calcul dynamique de la date d'hier au format AAAAMMJJ (Run stable 100% archivé)
+    yesterday = datetime.now() - timedelta(days=1)
+    date_folder = yesterday.strftime("%Y%m%dd") # Dossier avec 'd' (ex: 20261007d)
+    date_file = yesterday.strftime("%Y%m%d")    # Fichier sans 'd' (ex: 20261007)
+    
     try:
+        ctx = ssl._create_unverified_context()
+        
         with open(output_path, "wb") as fout:
-            # BOUCLE D'ISOLATION COMPLETE : Chaque échéance possède son propre canal éphémère
+            # Traitement séquentiel direct par URL
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
+                
+                # Formatage de l'échéance à 3 chiffres (ex: 12 -> 012, 24 -> 024)
+                step_str = f"{step_val:03d}"
+                
+                # VÉRITABLE URL DIRECTE DU SERVEUR DE STOCKAGE BRUT DE L'ECMWF (Modèle IFS 0.25° PL)
+                url = f"https://ecmwf.int{date_folder}/00z/ifs/0p25/oper/{date_file}0000-{step_str}h-oper-pl.grib2"
                 
                 chunk_raw_filename = f"temp_step_{step_val}.grib2"
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, chunk_raw_filename)
@@ -66,39 +80,32 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    # ON FORCE LA CRÉATION D'UN CLIENT NEUF À CHAQUE TOUR DE BOUCLE
-                    # Cela brise l'état de persistance qui gelait la connexion de l'ECMWF
-                    client = ecmwf.opendata.Client(source="ecmwf")
-                    
-                    client.retrieve(
-                        date=-1,
-                        time="00",
-                        step=step_val,
-                        stream="oper",
-                        type="fc",
-                        levtype="pl",
-                        levelist=selected_levels,
-                        param=selected_params,
-                        target=chunk_raw_path
-                    )
-                    
-                    # DESTRUCTION FORCÉE IMMÉDIATE DU CLIENT APRÈS TÉLÉCHARGEMENT
-                    del client
-                    gc.collect() # Appel du nettoyeur de mémoire agressif de Python
-                    
+                    # Téléchargement HTTP direct ultra-rapide (Bypass complet de la file d'attente)
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                        with open(chunk_raw_path, "wb") as f:
+                            f.write(response.read())
+                            
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
                         
-                    # Découpe géospatiale du morceau par pygrib
+                    # Filtrage et découpe immédiate par pygrib
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
-                            sub_data, lats, lons = grb.data(
-                                lat1=bounds["s"], lat2=bounds["n"], 
-                                lon1=bounds["w"], lon2=bounds["e"]
-                            )
-                            grb.values = sub_data
-                            fout.write(grb.tostring())
+                            short_name = getattr(grb, 'shortName', '')
+                            level = int(grb.level if hasattr(grb, 'level') else 0)
+                            
+                            param_match = short_name in selected_params if selected_params else True
+                            level_match = level in selected_levels if selected_levels else True
+                            
+                            if param_match and level_match:
+                                sub_data, lats, lons = grb.data(
+                                    lat1=bounds["s"], lat2=bounds["n"], 
+                                    lon1=bounds["w"], lon2=bounds["e"]
+                                )
+                                grb.values = sub_data
+                                fout.write(grb.tostring())
                         except Exception:
                             continue
                     fin.close()
@@ -120,7 +127,7 @@ def fetch_and_crop():
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur lors du traitement séquentiel : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur lors du traitement direct : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
