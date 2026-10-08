@@ -68,6 +68,11 @@
             const rect = canvas.getBoundingClientRect();
             startX = e.clientX - rect.left; startY = e.clientY - rect.top; endX = startX; endY = startY;
         });
+                canvas.addEventListener('mousedown', function(e) {
+            if (!e.shiftKey) return; isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            startX = e.clientX - rect.left; startY = e.clientY - rect.top; endX = startX; endY = startY;
+        });
         canvas.addEventListener('mousemove', function(e) {
             if (!isDrawing) return;
             const rect = canvas.getBoundingClientRect();
@@ -89,15 +94,16 @@
             isDrawing = true; drawSelectionBox(); isDrawing = false; checkReady();
         };
 
+        // AJOUT DU PRÉFIXE /ARPEGE POUR S'ALIGNER SUR L'AIGUILLEUR CENTRAL
         document.getElementById('btn-scan').onclick = function() {
             const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
             const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
             if(selectedSteps.length === 0) { alert("⚠️ Cochez au moins une échéance."); return; }
             
-            document.getElementById('status').innerText = "⏳ Scan Météo-France en cours...";
+            document.getElementById('status').innerText = "⏳ Scan ARPEGE Monde en cours...";
             document.getElementById('btn-scan').disabled = true;
 
-            fetch('/api/scan_arpege', {
+            fetch('/arpege/api/scan_arpege', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ steps: selectedSteps })
@@ -125,6 +131,7 @@
         document.getElementById('param-list').onchange = checkReady;
         document.getElementById('level-list').onchange = checkReady;
 
+        // FUSION DES ROUTES /ARPEGE/API POUR L'EXTRACTION FINALE
         document.getElementById('btn-crop').onclick = function() {
             const selectedParams = Array.from(document.getElementById('param-list').selectedOptions).map(opt => opt.value);
             const selectedLevels = Array.from(document.getElementById('level-list').selectedOptions).map(opt => opt.value);
@@ -135,13 +142,13 @@
             document.getElementById('btn-crop').disabled = true;
             
             let progressInterval = setInterval(function() {
-                fetch('/api/progress').then(res => res.json()).then(data => {
+                fetch('/arpege/api/progress').then(res => res.json()).then(data => {
                     document.getElementById('progress-bar').value = data.progress;
                     document.getElementById('progress-text').innerText = "Découpe ARPEGE en cours : " + data.progress + "%";
                 });
             }, 500);
 
-            fetch('/api/fetch_and_crop', {
+            fetch('/arpege/api/fetch_and_crop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps })
