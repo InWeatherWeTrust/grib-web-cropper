@@ -2,9 +2,10 @@ import sys
 import os
 import json
 import shutil
-import gc
+import urllib.request
+import ssl
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
-import ecmwf.opendata
 import pygrib
 
 app = Flask(__name__)
@@ -40,82 +41,85 @@ def fetch_and_crop():
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params = data.get("params")
-    selected_levels = data.get("levels")
-    selected_steps = data.get("steps")
+    selected_params = data.get("params")  # Ex: ['u', 'v', 't']
+    selected_levels = [int(l) for l in data.get("levels", [])]  # Ex: [1000, 850, 500]
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    # Sécurité : s'assurer que les échéances sont triées et uniques
-    steps_list = sorted(list(set([int(s) for s in selected_steps]))) if selected_steps else []
-    total_steps = len(steps_list)
-    
+    total_steps = len(selected_steps)
     if total_steps == 0:
         return jsonify({"error": "Veuillez sélectionner au moins une échéance."}), 400
         
     output_filename = "crop_ecmwf.grib2"
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     
-    # Nettoyage d'un build précédent
     if os.path.exists(output_path): 
         os.remove(output_path)
+        
+    # Calcul dynamique de la date d'hier au format AAAAMMJJ pour l'URL de stockage de l'ECMWF
+    yesterday = datetime.now() - timedelta(days=1)
+    date_str = yesterday.strftime("%Y%m%dd")
+    
+    # Dictionnaire de traduction des paramètres simplifiés de l'interface vers les codes officiels GRIB de l'ECMWF
+    param_mapping = {
+        "u": "131.128",  # u-component of wind
+        "v": "132.128",  # v-component of wind
+        "t": "130.128",  # Temperature
+        "gh": "156.128", # Geopotential height
+        "r": "157.128"   # Relative humidity
+    }
     
     try:
-        # Ouverture du fichier final d'assemblage
+        ctx = ssl._create_unverified_context()
+        
         with open(output_path, "wb") as fout:
-            
-            # BOUCLE DE SÉCURITÉ : Traitement séquentiel avec isolation réseau totale
-            for step_index, step_val in enumerate(steps_list):
-                # Mise à jour de la jauge globale avant l'étape
+            for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
+                
+                # Conversion du format de l'échéance à 3 caractères pour l'URL (ex: 12 -> 012, 24 -> 024)
+                step_str = f"{step_val:03d}"
+                
+                # URL brute de stockage de l'échéance IFS mondiale gratuite de l'ECMWF
+                url = f"https://ecmwf.int{date_str}/00z/ifs/0p40/oper/{date_str}0000-{step_str}h-oper-fc.grib2"
                 
                 chunk_raw_filename = f"temp_step_{step_val}.grib2"
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, chunk_raw_filename)
                 
-                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
-                
                 try:
-                    # RECONNEXION FORCÉE : On crée un client NEUF et ISOLÉ à chaque morceau
-                    # Cela évite le blocage du "pool" de connexion du pare-feu de l'ECMWF
-                    client = ecmwf.opendata.Client()
-                    
-                    client.retrieve(
-                        date=-1,
-                        time="00",
-                        step=step_val,
-                        stream="oper",
-                        type="fc",
-                        levtype="pl",
-                        levelist=selected_levels,
-                        param=selected_params,
-                        target=chunk_raw_path
-                    )
-                    
-                    # Destruction forcée du client réseau en mémoire immédiate
-                    del client
-                    gc.collect() # Nettoyeur de mémoire Python agressif
-                    
+                    # Téléchargement direct HTTP ultra-rapide (Zéro file d'attente serveur)
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
+                        with open(chunk_raw_path, "wb") as f:
+                            f.write(response.read())
+                            
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
-                    
-                    # Découpe immédiate de la tranche horaire reçue
+                        
+                    # Filtrage et découpe géographique immédiate du fichier binaire complet reçu
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
-                            sub_data, lats, lons = grb.data(
-                                lat1=bounds["s"], lat2=bounds["n"], 
-                                lon1=bounds["w"], lon2=bounds["e"]
-                            )
-                            grb.values = sub_data
-                            fout.write(grb.tostring())
+                            # 1. Vérification du paramètre (Wind, Temp, etc.)
+                            indicator = str(grb.indicatorOfParameter if hasattr(grb, 'indicatorOfParameter') else '')
+                            short_name = getattr(grb, 'shortName', '')
+                            param_match = any(p in selected_params for p in [short_name])
+                            
+                            # 2. Vérification de la profondeur (Niveau de pression hPa)
+                            level = int(grb.level if hasattr(grb, 'level') else 0)
+                            level_match = level in selected_levels if selected_levels else True
+                            
+                            if param_match and level_match:
+                                # Découpe de la matrice de données
+                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
+                                grb.values = sub_data
+                                fout.write(grb.tostring())
                         except Exception:
-                            fout.write(grb.tostring())
+                            continue
                     fin.close()
                     
-                except Exception as chunk_err:
-                    print(f"Erreur sur le pas {step_val}: {chunk_err}")
-                    continue # On passe au suivant si un morceau échoue
-                    
+                except Exception as e:
+                    print(f"Erreur téléchargement pas {step_val}: {e}")
+                    continue
                 finally:
-                    # Nettoyage physique du disque pour Render
                     if os.path.exists(chunk_raw_path):
                         os.remove(chunk_raw_path)
                         
@@ -125,7 +129,7 @@ def fetch_and_crop():
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur lors du traitement séquentiel isolé : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur lors du traitement séquentiel direct : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
