@@ -19,11 +19,9 @@ PROGRESS = 0
 def get_arpege_url(step_val):
     """Calcule l'URL exacte des données publiques ARPEGE MONDE 0.25° de Météo-France"""
     now = datetime.utcnow()
-    # On prend les données du run de 00h de la veille pour être 100% sûr de leur dispo
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
-    
     return f"https://meteo.fr{date_str}0000-{step_str}h-oper.grib2"
 
 @app.route('/')
@@ -92,7 +90,6 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels", [])
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    # Nettoyage propre et sécurisé des chaînes de texte reçues de l'interface
     selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
     selected_levels = [int(l.split("(")[0].strip()) for l in selected_levels_raw if "(" in l]
     
@@ -148,6 +145,3 @@ def download_file(filename):
     if os.path.exists(output_path):
         return send_file(output_path, as_attachment=True)
     return "Fichier introuvable", 404
-
-if __name__ == '__main__':
-    app.run(debug=True, port=5001)
