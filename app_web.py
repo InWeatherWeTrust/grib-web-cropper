@@ -2,8 +2,9 @@ import sys
 import os
 import json
 import shutil
+import gc
 from flask import Flask, render_template, request, jsonify, send_file
-from ecmwf.opendata import Client
+import ecmwf.opendata
 import pygrib
 
 app = Flask(__name__)
@@ -43,33 +44,39 @@ def fetch_and_crop():
     selected_levels = data.get("levels")
     selected_steps = data.get("steps")
     
-    # Sécurité : trier les échéances sous forme d'entiers
-    steps_list = sorted([int(s) for s in selected_steps]) if selected_steps else [12]
+    # Sécurité : s'assurer que les échéances sont triées et uniques
+    steps_list = sorted(list(set([int(s) for s in selected_steps]))) if selected_steps else []
     total_steps = len(steps_list)
     
-    client = Client()
-    
+    if total_steps == 0:
+        return jsonify({"error": "Veuillez sélectionner au moins une échéance."}), 400
+        
     output_filename = "crop_ecmwf.grib2"
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     
-    # Nettoyage d'un éventuel build précédent cassé
+    # Nettoyage d'un build précédent
     if os.path.exists(output_path): 
         os.remove(output_path)
     
     try:
-        # Ouverture du fichier final unique en mode écriture binaire
+        # Ouverture du fichier final d'assemblage
         with open(output_path, "wb") as fout:
             
-            # BOUCLE ANTI-SATURATION : Traitement individuel de chaque échéance horaire
+            # BOUCLE DE SÉCURITÉ : Traitement séquentiel avec isolation réseau totale
             for step_index, step_val in enumerate(steps_list):
+                # Mise à jour de la jauge globale avant l'étape
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                # Fichier temporaire pour l'échéance en cours
                 chunk_raw_filename = f"temp_step_{step_val}.grib2"
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, chunk_raw_filename)
                 
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                
                 try:
-                    # 1. Téléchargement d'une seule échéance (poids plume, aucun freeze)
+                    # RECONNEXION FORCÉE : On crée un client NEUF et ISOLÉ à chaque morceau
+                    # Cela évite le blocage du "pool" de connexion du pare-feu de l'ECMWF
+                    client = ecmwf.opendata.Client()
+                    
                     client.retrieve(
                         date=-1,
                         time="00",
@@ -82,10 +89,14 @@ def fetch_and_crop():
                         target=chunk_raw_path
                     )
                     
+                    # Destruction forcée du client réseau en mémoire immédiate
+                    del client
+                    gc.collect() # Nettoyeur de mémoire Python agressif
+                    
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
                     
-                    # 2. Découpe géographique immédiate du morceau
+                    # Découpe immédiate de la tranche horaire reçue
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
@@ -99,8 +110,12 @@ def fetch_and_crop():
                             fout.write(grb.tostring())
                     fin.close()
                     
+                except Exception as chunk_err:
+                    print(f"Erreur sur le pas {step_val}: {chunk_err}")
+                    continue # On passe au suivant si un morceau échoue
+                    
                 finally:
-                    # 3. Nettoyage immédiat du morceau brut pour libérer la RAM de Render
+                    # Nettoyage physique du disque pour Render
                     if os.path.exists(chunk_raw_path):
                         os.remove(chunk_raw_path)
                         
@@ -109,9 +124,8 @@ def fetch_and_crop():
         
     except Exception as e:
         PROGRESS = 0
-        if os.path.exists(output_path): 
-            os.remove(output_path)
-        return jsonify({"error": f"Erreur lors du traitement séquentiel : {str(e)}"}), 500
+        if os.path.exists(output_path): os.remove(output_path)
+        return jsonify({"error": f"Erreur lors du traitement séquentiel isolé : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
