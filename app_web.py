@@ -17,11 +17,18 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_valid_ecmwf_url(step_val):
-    """Teste les dates récentes pour trouver le fichier binaire disponible sur l'ECMWF"""
+    """Teste les dates récentes pour trouver le fichier GRIB disponible sur l'ECMWF"""
     ctx = ssl._create_unverified_context()
     step_str = f"{step_val:03d}"
     
-    # On teste aujourd'hui (0), hier (1), l'avant-veille (2)
+    # En-têtes complets pour contourner les blocages de sécurité des serveurs européens
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Connection': 'close' # Force la fermeture pour éviter de bloquer le DNS de Render
+    }
+    
+    # Test d'aujourd'hui (0) à l'avant-veille (3)
     for days_back in range(0, 4):
         target_date = datetime.now() - timedelta(days=days_back)
         date_str = target_date.strftime("%Y%m%d")
@@ -29,15 +36,14 @@ def get_valid_ecmwf_url(step_val):
         url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
         
         try:
-            # On envoie une requête ultra-légère (HEAD) pour vérifier si le fichier existe
-            req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ctx, timeout=5):
-                print(f"✅ Fichier trouvé pour la date : {date_str}")
+            req = urllib.request.Request(url, method='HEAD', headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=4):
+                print(f"✅ Fichier ECMWF validé pour le : {date_str}")
                 return url
         except Exception:
             continue
             
-    # Si tout échoue, secours sur la date de sécurité (hier)
+    # Sécurité absolue : si le scan échoue (ex: serveurs ECMWF en maintenance), repli sur hier
     yesterday = datetime.now() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
@@ -78,7 +84,9 @@ def scan_ecmwf():
     
     try:
         ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'}
+        req = urllib.request.Request(url, headers=headers)
+        
         with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
             with open(scan_path, "wb") as f:
                 f.write(response.read())
@@ -139,6 +147,7 @@ def fetch_and_crop():
     
     try:
         ctx = ssl._create_unverified_context()
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'}
         
         with open(output_path, "wb") as fout:
             for step_index, step_val in enumerate(selected_steps):
@@ -148,8 +157,8 @@ def fetch_and_crop():
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_step_{step_val}.grib2")
                 
                 try:
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, context=ctx, timeout=35) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
                             
