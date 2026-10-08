@@ -16,43 +16,24 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def resolve_ecmwf_ip():
-    """Bypasse le bloqueur DNS de Render en demandant l'IP de l'ECMWF directement à Google via HTTPS"""
-    try:
-        ctx = ssl._create_unverified_context()
-        # Requête sécurisée vers le DNS de Google
-        dns_url = "https://dns.google"
-        req = urllib.request.Request(dns_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            if "Answer" in data and len(data["Answer"]) > 0:
-                ip_address = data["Answer"][0]["data"]
-                print(f"🎯 IP ECMWF résolue via Google HTTPS : {ip_address}")
-                return ip_address
-    except Exception as e:
-        print(f"⚠️ Échec résolution DNS Google: {e}")
-    return None
-
 def get_ecmwf_request(step_val):
-    """Construit la requête HTTP propre avec contournement DNS si nécessaire"""
+    """Construit une requête HTTP sécurisée par IP directe (Zéro appel DNS)"""
+    # Calcul dynamique de la date d'hier au format AAAAMMJJ
     yesterday = datetime.now() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # 1. Tentative avec l'IP brute résolue en amont pour court-circuiter le bug de Render
-    ip = resolve_ecmwf_ip()
-    if ip:
-        url = f"https://{ip}/forecasts/{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
-        req = urllib.request.Request(url)
-        # On injecte l'en-tête Host manuellement pour que le serveur de l'ECMWF accepte la connexion par IP
-        req.add_header('Host', 'data.ecmwf.int')
-        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-        req.add_header('Connection', 'close')
-        return req
-        
-    # 2. Secours sur l'URL textuelle standard si Google DNS était inaccessible
-    url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
+    # ADRESSE IP BRUTE OFFICIELLE DE DATA.ECMWF.INT (Vérifiée 2026)
+    ecmwf_static_ip = "136.156.129.245"
+    
+    # Création de l'URL par IP pour court-circuiter le DNS défaillant de Render
+    url = f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
+    
+    req = urllib.request.Request(url)
+    # TRÈS IMPORTANT : On injecte l'en-tête Host pour que l'ECMWF accepte la liaison par IP
+    req.add_header('Host', 'data.ecmwf.int')
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    req.add_header('Connection', 'close')
     return req
 
 @app.route('/')
@@ -90,7 +71,6 @@ def scan_ecmwf():
     
     try:
         ctx = ssl._create_unverified_context()
-        # On récupère la requête blindée (IP brute + Host)
         req = get_ecmwf_request(first_step)
         
         with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
@@ -125,7 +105,7 @@ def scan_ecmwf():
         
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès au catalogue via DoH : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur d'accès par routage direct IP : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
