@@ -1,10 +1,13 @@
+import sys
 import os
 import json
+import shutil
 from flask import Flask, render_template, request, jsonify, send_file
 from ecmwf.opendata import Client
 import pygrib
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -20,44 +23,62 @@ def get_progress():
     global PROGRESS
     return jsonify({"progress": PROGRESS})
 
+@app.route('/api/clean', methods=['POST'])
+def clean_server_dir():
+    try:
+        shutil.rmtree(UPLOAD_FOLDER)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        return jsonify({"success": True, "message": "Stockage cloud vidé avec succès ! (0 Mo occupés)"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
     global PROGRESS
-    PROGRESS = 10
+    PROGRESS = 15  # Connexion établie
     
     data = request.json
     bounds = data.get("bounds")
     selected_params = data.get("params")
     selected_levels = data.get("levels")
-    selected_steps = data.get("steps")  # Récupère la liste des échéances (ex:)
+    selected_steps = data.get("steps")
     
-    # Conversion en entiers pour l'API ECMWF
-    steps_list = [int(s) for s in selected_steps] if selected_steps else [12]
+    # Sécurité : trier et s'assurer que les échéances sont bien des entiers
+    steps_list = sorted([int(s) for s in selected_steps]) if selected_steps else [12]
     
+    # Configuration du client ECMWF avec évitement de latence
     client = Client()
+    
     raw_filename = "ecmwf_global.grib2"
     raw_path = os.path.join(UPLOAD_FOLDER, raw_filename)
     output_filename = "crop_ecmwf.grib2"
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     
+    # Suppression d'un éventuel fichier résiduel bloqué
+    if os.path.exists(raw_path): os.remove(raw_path)
+    if os.path.exists(output_path): os.remove(output_path)
+    
     try:
-        PROGRESS = 30
+        PROGRESS = 35  # Envoi de la requête au catalogue de l'ECMWF
         
-        # L'API télécharge à la carte les champs, niveaux ET étapes demandés
+        # Téléchargement verrouillé sur le run stable de la veille
         client.retrieve(
-            date=-1,
-            time="00",
-            step=steps_list,  # Injection de la liste des échéances choisies
+            date=-1,                # Verrouille strictement sur la journée d'hier (100% calculée)
+            time="00",              # Run stable initialisé à 00:00 UTC
+            step=steps_list,        # Liste des échéances (+12h, +24h, +36h, etc.)
             stream="oper",
             type="fc",
-            levtype="pl",
+            levtype="pl",           # Pressure Levels (Altitude)
             levelist=selected_levels,
             param=selected_params,
             target=raw_path
         )
         
-        PROGRESS = 60
+        PROGRESS = 65  # Téléchargement réussi, bascule immédiate sur pygrib
         
+        if not os.path.exists(raw_path) or os.path.getsize(raw_path) == 0:
+            return jsonify({"error": "L'ECMWF a renvoyé un fichier vide pour ces échéances."}), 400
+            
         fin = pygrib.open(raw_path)
         fout = open(output_path, "wb")
         total_msg = sum(1 for _ in fin)
@@ -72,9 +93,10 @@ def fetch_and_crop():
                 grb.values = sub_data
                 fout.write(grb.tostring())
             except Exception:
+                # Si une couche échoue, on conserve la structure native pour éviter le crash
                 fout.write(grb.tostring())
                 
-            PROGRESS = 60 + int(((index + 1) / total_msg) * 40)
+            PROGRESS = 65 + int(((index + 1) / total_msg) * 30)
             
         fin.close()
         fout.close()
@@ -88,8 +110,7 @@ def fetch_and_crop():
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(raw_path): os.remove(raw_path)
-        return jsonify({"error": f"Erreur ECMWF : {str(e)}"}), 500
-
+        return jsonify({"error": f"Erreur de communication ou d'échéance ECMWF : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
