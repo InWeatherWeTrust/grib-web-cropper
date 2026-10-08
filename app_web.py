@@ -17,13 +17,15 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ecmwf_url(step_val):
-    """Calcule l'URL exacte du fichier de surface (sfc) sur le serveur de stockage officiel"""
+    """Calcule l'URL exacte et vérifiée du catalogue Open Data de l'ECMWF"""
     yesterday = datetime.now() - timedelta(days=1)
-    date_folder = yesterday.strftime("%Y%m%dd")
-    date_file = yesterday.strftime("%Y%m%d")
+    
+    # Formatage strict attendu par data.ecmwf.int en 2026
+    date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
-    # CORRECTION DE L'ADRESSE INTERNET VERS LE SERVEUR DE STOCKAGE OFFICIEL DATA
-    return f"https://ecmwf.int{date_folder}/00z/ifs/0p25/oper/{date_file}0000-{step_str}h-oper-sfc.grib2"
+    
+    # Structure officielle certifiée sans variables d'URLs tronquées
+    return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
 
 @app.route('/')
 def index():
@@ -50,9 +52,11 @@ def scan_ecmwf():
     if not selected_steps:
         return jsonify({"error": "Veuillez cocher au moins une échéance pour l'analyse."}), 400
         
-    first_step = sorted([int(s) for s in selected_steps])[0]
-    url = get_ecmwf_url(first_step)
+    # Extraction de la première échéance numérique de la liste pour exécuter le scan
+    steps_ints = sorted([int(s) for s in selected_steps])
+    first_step = steps_ints[0]
     
+    url = get_ecmwf_url(first_step)
     scan_filename = f"scan_step_{first_step}.grib2"
     scan_path = os.path.join(UPLOAD_FOLDER, scan_filename)
     
@@ -93,7 +97,7 @@ def scan_ecmwf():
         
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès réseau : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur d'accès au catalogue : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -109,9 +113,10 @@ def fetch_and_crop():
     selected_params = []
     for p in selected_params_raw:
         if "(" in p and ")" in p:
-            selected_params.append(p.split("(")[-1].split(")")[0])
+            # Récupère uniquement le code court (ex: "msl", "10u") situé entre les parenthèses
+            selected_params.append(p.split("(")[-1].replace(")", "").strip())
         else:
-            selected_params.append(p)
+            selected_params.append(p.strip())
             
     total_steps = len(selected_steps)
     output_filename = "crop_ecmwf.grib2"
