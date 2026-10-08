@@ -23,43 +23,43 @@ def get_progress():
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
     global PROGRESS
-    PROGRESS = 10  # Début du processus
+    PROGRESS = 10
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params = data.get("params")     # Ex: ['gh', 't', 'u', 'v']
-    selected_levels = data.get("levels")     # Ex: ['1000', '850', '500'] (profondeurs)
+    selected_params = data.get("params")
+    selected_levels = data.get("levels")
+    selected_steps = data.get("steps")  # Récupère la liste des échéances (ex:)
     
-    # Par défaut, on prend les prévisions du jour (run de 00h)
+    # Conversion en entiers pour l'API ECMWF
+    steps_list = [int(s) for s in selected_steps] if selected_steps else [12]
+    
     client = Client()
-    
     raw_filename = "ecmwf_global.grib2"
     raw_path = os.path.join(UPLOAD_FOLDER, raw_filename)
     output_filename = "crop_ecmwf.grib2"
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     
     try:
-        PROGRESS = 30  # Téléchargement depuis l'ECMWF
+        PROGRESS = 30
         
-        # L'API télécharge UNIQUEMENT les champs et profondeurs demandés depuis l'ECMWF
+        # L'API télécharge à la carte les champs, niveaux ET étapes demandés
         client.retrieve(
-            date=-1,                # Fichiers du jour ou de la veille
-            time="00",              # Run météo de minuit
-            step=12,                # Échéance à +12h (modifiable)
+            date=-1,
+            time="00",
+            step=steps_list,  # Injection de la liste des échéances choisies
             stream="oper",
             type="fc",
-            levtype="pl",           # Pressure Levels (Niveaux de pression / profondeurs)
+            levtype="pl",
             levelist=selected_levels,
             param=selected_params,
             target=raw_path
         )
         
-        PROGRESS = 60  # Début de la découpe géographique locale
+        PROGRESS = 60
         
-        # Découpe géospatiale de l'extrait reçu avec pygrib
         fin = pygrib.open(raw_path)
         fout = open(output_path, "wb")
-        
         total_msg = sum(1 for _ in fin)
         fin.seek(0)
         
@@ -79,7 +79,6 @@ def fetch_and_crop():
         fin.close()
         fout.close()
         
-        # Nettoyage du fichier brut
         if os.path.exists(raw_path):
             os.remove(raw_path)
             
@@ -90,6 +89,7 @@ def fetch_and_crop():
         PROGRESS = 0
         if os.path.exists(raw_path): os.remove(raw_path)
         return jsonify({"error": f"Erreur ECMWF : {str(e)}"}), 500
+
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
