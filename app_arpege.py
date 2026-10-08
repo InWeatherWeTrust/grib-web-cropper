@@ -8,10 +8,14 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
 
-app = Flask(__name__, template_folder='templates')
+# CORRECTION CRUCIALE : Calcul du chemin absolu pour forcer Flask à trouver les templates sous l'aiguilleur
+base_dir = os.path.dirname(os.path.abspath(__file__))
+template_dir = os.path.join(base_dir, 'templates')
+
+app = Flask(__name__, template_folder=template_dir)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'uploads')
+UPLOAD_FOLDER = os.path.join(base_dir, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
@@ -24,7 +28,9 @@ def get_arpege_url(step_val):
     step_str = f"{step_val:03d}"
     return f"https://meteo.fr{date_str}0000-{step_str}h-oper.grib2"
 
+# SÉCURITÉ DOUBLE ROUTE : Répond sur / et sur l'alias d'aiguillage
 @app.route('/')
+@app.route('/arpege')
 def index():
     return render_template('arpege.html')
 
@@ -130,8 +136,9 @@ def fetch_and_crop():
                             continue
                     fin.close()
                 finally:
-                    if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
-                    
+                    if os.path.exists(chunk_raw_path):
+                        os.remove(chunk_raw_path)
+                        
         PROGRESS = 100
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
