@@ -19,22 +19,46 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
+def resolve_dns_via_cloudflare(domain):
+    """Interroge l'API sécurisée de Cloudflare en HTTPS pour bypasser le DNS cassé de Render"""
+    try:
+        ctx = ssl._create_unverified_context()
+        url = f"https://cloudflare-dns.com{domain}&type=A"
+        req = urllib.request.Request(url)
+        req.add_header('Accept', 'application/dns-json')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if "Answer" in data and len(data["Answer"]) > 0:
+                # Récupère la première IP valide renvoyée par Cloudflare
+                return data["Answer"][0]["data"]
+    except Exception as e:
+        print(f"⚠️ Échec DNS Cloudflare pour {domain}: {e}")
+    return None
+
 def get_arpege_request(step_val):
-    """Construit une requête HTTP sécurisée par IP directe vers le miroir Cloud (Zéro appel DNS)"""
+    """Construit une requête HTTP sécurisée et dynamique par injection d'IP résolue"""
     now = datetime.utcnow()
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # ADRESSE IP PHYSIQUE DIRECTE DU MIROIR OPEN DATA DE MÉTÉO-FRANCE
-    cloud_static_ip = "51.159.20.10"
+    domain = "meteoff-prod-opendata.s3.fr-par.scw.cloud"
     
-    # URL construite par IP brute pour contourner le DNS défaillant de Render
-    url = f"https://{cloud_static_ip}/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
+    # 1. Résolution dynamique via Cloudflare
+    dynamic_ip = resolve_dns_via_cloudflare(domain)
     
-    req = urllib.request.Request(url)
-    # TRÈS IMPORTANT : On force l'hôte d'identité pour que le serveur cloud accepte la liaison par IP
-    req.add_header('Host', 'meteoff-prod-opendata.s3.fr-par.scw.cloud')
+    if dynamic_ip:
+        print(f"🎯 IP Météo-France résolue par Cloudflare : {dynamic_ip}")
+        url = f"https://{dynamic_ip}/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
+        req = urllib.request.Request(url)
+        req.add_header('Host', domain)
+    else:
+        # 2. Repli textuel si l'API Cloudflare ne répondait pas
+        url = f"https://{domain}/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
+        req = urllib.request.Request(url)
+        
     req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
     req.add_header('Connection', 'close')
     return req
@@ -66,7 +90,7 @@ def scan_arpege():
         ctx = ssl._create_unverified_context()
         req = get_arpege_request(first_step)
         
-        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+        with urllib.request.urlopen(req, context=ctx, timeout=35) as response:
             with open(scan_path, "wb") as f:
                 f.write(response.read())
                 
@@ -93,7 +117,7 @@ def scan_arpege():
         return jsonify({"success": True, "params": sorted(list(params_set)), "levels": sorted(list(levels_set))})
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès par IP cloud : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur de liaison via Proxy DNS Cloudflare : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -124,10 +148,13 @@ def fetch_and_crop():
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 
                 try:
-                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                    with urllib.request.urlopen(req, context=ctx, timeout=35) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
                             
+                    if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
+                        continue
+                        
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
