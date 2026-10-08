@@ -16,15 +16,30 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ecmwf_url(step_val):
-    """Calcule l'URL exacte et vérifiée du catalogue Open Data de l'ECMWF"""
-    yesterday = datetime.now() - timedelta(days=1)
-    
-    # Formatage strict attendu par data.ecmwf.int en 2026
-    date_str = yesterday.strftime("%Y%m%d")
+def get_valid_ecmwf_url(step_val):
+    """Teste les dates récentes pour trouver le fichier binaire disponible sur l'ECMWF"""
+    ctx = ssl._create_unverified_context()
     step_str = f"{step_val:03d}"
     
-    # Structure officielle certifiée sans variables d'URLs tronquées
+    # On teste aujourd'hui (0), hier (1), l'avant-veille (2)
+    for days_back in range(0, 4):
+        target_date = datetime.now() - timedelta(days=days_back)
+        date_str = target_date.strftime("%Y%m%d")
+        
+        url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
+        
+        try:
+            # On envoie une requête ultra-légère (HEAD) pour vérifier si le fichier existe
+            req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ctx, timeout=5):
+                print(f"✅ Fichier trouvé pour la date : {date_str}")
+                return url
+        except Exception:
+            continue
+            
+    # Si tout échoue, secours sur la date de sécurité (hier)
+    yesterday = datetime.now() - timedelta(days=1)
+    date_str = yesterday.strftime("%Y%m%d")
     return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
 
 @app.route('/')
@@ -52,11 +67,10 @@ def scan_ecmwf():
     if not selected_steps:
         return jsonify({"error": "Veuillez cocher au moins une échéance pour l'analyse."}), 400
         
-    # Extraction de la première échéance numérique de la liste pour exécuter le scan
     steps_ints = sorted([int(s) for s in selected_steps])
     first_step = steps_ints[0]
     
-    url = get_ecmwf_url(first_step)
+    url = get_valid_ecmwf_url(first_step)
     scan_filename = f"scan_step_{first_step}.grib2"
     scan_path = os.path.join(UPLOAD_FOLDER, scan_filename)
     
@@ -113,7 +127,6 @@ def fetch_and_crop():
     selected_params = []
     for p in selected_params_raw:
         if "(" in p and ")" in p:
-            # Récupère uniquement le code court (ex: "msl", "10u") situé entre les parenthèses
             selected_params.append(p.split("(")[-1].replace(")", "").strip())
         else:
             selected_params.append(p.strip())
@@ -131,7 +144,7 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ecmwf_url(step_val)
+                url = get_valid_ecmwf_url(step_val)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_step_{step_val}.grib2")
                 
                 try:
