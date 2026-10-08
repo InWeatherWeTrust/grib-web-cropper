@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Cloud Cropper - Multi-Steps</title>
+    <title>GRIB Cloud Cropper - Dynamic Scan Edition</title>
     <style>
         body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
         #sidebar { width: 420px; padding: 20px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; overflow-y: auto; }
@@ -12,7 +12,7 @@
         button { background: #0ea5e9; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 13px; }
         button:hover { background: #0284c7; }
         button:disabled { background: #475569; cursor: not-allowed; }
-        select { background: #1e293b; color: white; border: 1px solid #334155; border-radius: 5px; padding: 6px; font-size: 13px; width: 100%; box-sizing: border-box; }
+        select, input[type="text"] { background: #1e293b; color: white; border: 1px solid #334155; border-radius: 5px; padding: 6px; font-size: 13px; width: 100%; box-sizing: border-box; }
         select[multiple] { min-height: 140px; }
         h3 { font-size: 14px; margin-top: 5px; margin-bottom: 2px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
         .coords { font-family: monospace; color: #34d399; background: #1e293b; padding: 8px; border-radius: 5px; border: 1px solid #334155; font-size: 12px; }
@@ -20,45 +20,31 @@
         progress { width: 100%; height: 12px; accent-color: #0ea5e9; }
         .leaflet-zoom-box { border: 2px dashed #38bdf8; background: rgba(56, 189, 248, 0.18); position: absolute; z-index: 800; pointer-events: none; }
         .btn-success { background: #10b981; } .btn-success:hover { background: #059669; }
-        /* Style des cases à cocher */
-        .step-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
+        .btn-warning { background: #f59e0b; color: #000; } .btn-warning:hover { background: #d97706; }
+        .step-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
         .step-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #cbd5e1; }
     </style>
 </head>
 <body>
 
     <div id="sidebar">
-        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px;">🌐 GRIB Cloud Connector</h2>
-        <div id="status" style="color: #10b981; font-size: 11px; font-weight:bold; margin-bottom: 5px;">⚡ data.ecmwf.int en direct</div>
+        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px;">🌐 GRIB Dynamic Cropper</h2>
+        <div id="status" style="color: #94a3b8; font-size: 11px;">Sélectionnez vos échéances puis lancez le scan.</div>
         
-        <h3>📊 1. Paramètres (Champs) :</h3>
-        <select id="param-list" multiple>
-            <option value="u" selected>Vent U (u-component of wind)</option>
-            <option value="v" selected>Vent V (v-component of wind)</option>
-            <option value="t">Température (Temperature)</option>
-            <option value="gh">Géopotentiel (Geopotential height)</option>
-            <option value="r">Humidité Relative (Relative humidity)</option>
-        </select>
-
-        <h3>📉 2. Profondeurs (Niveaux hPa) :</h3>
-        <select id="level-list" multiple>
-            <option value="1000" selected>1000 hPa (Surface)</option>
-            <option value="850" selected>850 hPa (Env. 1500m)</option>
-            <option value="700">700 hPa (Env. 3000m)</option>
-            <option value="500" selected>500 hPa (Env. 5500m)</option>
-            <option value="400">400 hPa (Env. 7000m)</option>
-            <option value="300">300 hPa (Courant-jet)</option>
-            <option value="250">250 hPa (Altitude max)</option>
-        </select>
-
-        <h3>⏱️ 3. Échéances (Disponibles ECMWF) :</h3>
+        <h3>⏱️ 1. Échéances à scanner :</h3>
         <div class="step-grid" id="step-container">
-            <label class="step-item"><input type="checkbox" value="12" checked> +12h (Échéance courte)</label>
-            <label class="step-item"><input type="checkbox" value="24" checked> +24h (Lendemain)</label>
-            <label class="step-item"><input type="checkbox" value="48"> +48h (2 jours)</label>
-            <label class="step-item"><input type="checkbox" value="72"> +72h (3 jours max)</label>
+            <label class="step-item"><input type="checkbox" value="12" checked> +12h</label>
+            <label class="step-item"><input type="checkbox" value="24" checked> +24h</label>
+            <label class="step-item"><input type="checkbox" value="48"> +48h</label>
+            <label class="step-item"><input type="checkbox" value="72"> +72h</label>
         </div>
+        <button id="btn-scan" class="btn-warning" style="margin-top: 5px;">🔍 Scan automatique du fichier distant</button>
 
+        <h3>📊 2. Paramètres détectés :</h3>
+        <select id="param-list" multiple><option disabled>En attente du scan...</option></select>
+
+        <h3>📉 3. Profondeurs détectées (Niveaux) :</h3>
+        <select id="level-list" multiple><option disabled>En attente du scan...</option></select>
 
         <h3>💾 4. Zones Favorites :</h3>
         <div style="display: flex; gap: 5px; width: 100%;">
@@ -68,14 +54,14 @@
                 <option value='{"n":48,"s":43,"e":-1,"w":-10}'>Golfe de Gascogne</option>
                 <option value='{"n":44,"s":35,"e":20,"w":-5}'>Méditerranée Ouest</option>
             </select>
-            <button id="btn-load-fav" class="btn-success">📂 Charger</button>
+            <button id="btn-load-fav" class="btn-success">📂 OK</button>
         </div>
         
         <h3>🌐 5. Zone de sélection :</h3>
         <div id="coords-display" class="coords">Aucune zone tracée.</div>
         
         <div id="progress-container" class="progress-box">
-            <span style="font-size:11px; color:#34d399;" id="progress-text">Connexion ECMWF...</span>
+            <span style="font-size:11px; color:#34d399;" id="progress-text">Traitement...</span>
             <progress id="progress-bar" value="0" max="100"></progress>
         </div>
         
@@ -111,12 +97,11 @@
         function drawShape(poly) {
             if (!poly || poly.length < 2) return;
             try {
-                mctx.beginPath(); mctx.moveTo(toX(poly), toY(poly));
+                mctx.beginPath(); mctx.moveTo(toX(poly[0]), toY(poly[0]));
                 for (let i = 1; i < poly.length; i++) mctx.lineTo(toX(poly[i]), toY(poly[i]));
                 mctx.closePath(); mctx.fill(); mctx.stroke();
             } catch(e) {}
         }
-
         function drawWorldMap() {
             mctx.fillStyle = '#0b0f19'; mctx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
             mctx.fillStyle = '#1e293b'; mctx.strokeStyle = '#334155'; mctx.lineWidth = 1.2;
@@ -159,7 +144,6 @@
         }
 
         window.addEventListener('resize', resizeCanvas); setTimeout(resizeCanvas, 100);
-
         canvas.addEventListener('mousedown', function(e) {
             if (!e.shiftKey) return; isDrawing = true;
             const rect = canvas.getBoundingClientRect();
@@ -173,7 +157,7 @@
             let sC = pixelToCoords(startX, startY); let eC = pixelToCoords(endX, endY);
             window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
             display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
-            if(window.currentBounds) document.getElementById('btn-crop').disabled = false;
+            checkReady();
         });
         canvas.addEventListener('mouseup', function() { if (isDrawing) isDrawing = false; });
 
@@ -183,22 +167,50 @@
             display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
             startX = toX(window.currentBounds.w); startY = toY(window.currentBounds.n);
             endX = toX(window.currentBounds.e); endY = toY(window.currentBounds.s);
-            isDrawing = true; drawSelectionBox(); isDrawing = false;
-            document.getElementById('btn-crop').disabled = false;
+            isDrawing = true; drawSelectionBox(); isDrawing = false; checkReady();
         };
+
+        document.getElementById('btn-scan').onclick = function() {
+            const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
+            const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
+            if(selectedSteps.length === 0) { alert("⚠️ Cochez au moins une échéance."); return; }
+            
+            document.getElementById('status').innerText = "⏳ Analyse en cours à l'ECMWF...";
+            document.getElementById('btn-scan').disabled = true;
+
+            fetch('/api/scan_ecmwf', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ steps: selectedSteps })
+            })
+            .then(res => res.json()).then(data => {
+                document.getElementById('btn-scan').disabled = false;
+                if(data.error) { document.getElementById('status').innerText = "❌ " + data.error; }
+                else {
+                    document.getElementById('status').innerText = "✅ Analyse réussie !";
+                    const pList = document.getElementById('param-list'); pList.innerHTML = "";
+                    data.params.forEach(p => { let o = document.createElement('option'); o.value = p; o.innerText = p; pList.appendChild(o); });
+                    const lList = document.getElementById('level-list'); lList.innerHTML = "";
+                    data.levels.forEach(l => { let o = document.createElement('option'); o.value = l; o.innerText = l === 0 ? "0 (Surface)" : `${l} hPa`; lList.appendChild(o); });
+                    checkReady();
+                }
+            }).catch(() => { document.getElementById('status').innerText = "❌ Erreur de liaison cloud."; document.getElementById('btn-scan').disabled = false; });
+        };
+
+        function checkReady() {
+            const pSelect = document.getElementById('param-list');
+            if (window.currentBounds && pSelect.options.length > 0 && pSelect.value !== "") {
+                document.getElementById('btn-crop').disabled = false;
+            }
+        }
+        document.getElementById('param-list').onchange = checkReady;
+        document.getElementById('level-list').onchange = checkReady;
 
         document.getElementById('btn-crop').onclick = function() {
             const selectedParams = Array.from(document.getElementById('param-list').selectedOptions).map(opt => opt.value);
             const selectedLevels = Array.from(document.getElementById('level-list').selectedOptions).map(opt => opt.value);
-            
-            // Collecte des valeurs des cases à cocher cochées pour les échéances
             const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
             const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
-            
-            if(selectedParams.length === 0 || selectedLevels.length === 0 || selectedSteps.length === 0) {
-                alert("⚠️ Choisissez au moins un paramètre, un niveau et une échéance.");
-                return;
-            }
 
             document.getElementById('progress-container').style.display = 'flex';
             document.getElementById('btn-crop').disabled = true;
@@ -206,8 +218,7 @@
             let progressInterval = setInterval(function() {
                 fetch('/api/progress').then(res => res.json()).then(data => {
                     document.getElementById('progress-bar').value = data.progress;
-                    if(data.progress < 50) document.getElementById('progress-text').innerText = "📥 Téléchargement ECMWF : " + data.progress + "%";
-                    else document.getElementById('progress-text').innerText = "✂️ Découpe géographique : " + data.progress + "%";
+                    document.getElementById('progress-text').innerText = "Extraction cloud en cours : " + data.progress + "%";
                 });
             }, 500);
 
@@ -217,11 +228,8 @@
                 body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps })
             })
             .then(res => res.json()).then(data => {
-                clearInterval(progressInterval);
-                document.getElementById('progress-container').style.display = 'none';
-                document.getElementById('btn-crop').disabled = false;
-                if (data.success) { window.location.href = data.download_url; } 
-                else { alert("❌ " + data.error); }
+                clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
+                if (data.success) { window.location.href = data.download_url; } else { alert("❌ " + data.error); }
             });
         };
     </script>
