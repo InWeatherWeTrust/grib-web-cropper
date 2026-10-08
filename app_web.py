@@ -34,9 +34,10 @@ def clean_server_dir():
 
 @app.route('/api/scan_ecmwf', methods=['POST'])
 def scan_ecmwf():
-    """Utilise l'API officielle pour télécharger le premier pas horaire et en lire les paramètres réels"""
     data = request.json
     selected_steps = data.get("steps", [])
+    levtype = data.get("levtype", "sfc") # Récupère le mode choisi (sfc ou pl)
+    
     if not selected_steps:
         return jsonify({"error": "Veuillez cocher au moins une échéance."}), 400
         
@@ -49,7 +50,6 @@ def scan_ecmwf():
     if os.path.exists(scan_path): os.remove(scan_path)
     
     try:
-        # L'API officielle gère le contournement des pare-feu d'hébergeurs
         client = Client(source="ecmwf")
         client.retrieve(
             date=-1,
@@ -57,7 +57,7 @@ def scan_ecmwf():
             step=first_step,
             stream="oper",
             type="fc",
-            levtype="sfc", # On cible le fichier de surface (sfc) qui contient le vent et la pression msl
+            levtype=levtype, # Utilisation dynamique du mode
             target=scan_path
         )
                 
@@ -101,6 +101,7 @@ def fetch_and_crop():
     selected_params_raw = data.get("params", [])
     selected_levels = [int(l) for l in data.get("levels", [])]
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    levtype = data.get("levtype", "sfc") # Récupère le mode choisi (sfc ou pl)
     
     selected_params = []
     for p in selected_params_raw:
@@ -126,14 +127,13 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    # Extraction séquentielle par l'API officielle
                     client.retrieve(
                         date=-1,
                         time="00",
                         step=step_val,
                         stream="oper",
                         type="fc",
-                        levtype="sfc",
+                        levtype=levtype, # Téléchargement dynamique du mode
                         target=chunk_raw_path
                     )
                             
