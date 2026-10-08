@@ -17,25 +17,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_arpege_url(step_val):
-    """Calcule l'URL exacte des données publiques ARPEGE Europe 0.1° de Météo-France"""
-    # Météo-France publie ses fichiers très vite : on cible le run de 00h d'aujourd'hui ou d'hier
+    """Calcule l'URL exacte des données publiques ARPEGE MONDE 0.25° de Météo-France"""
     now = datetime.utcnow()
-    date_str = now.strftime("%Y%m%d")
+    # On prend les données du run de 00h de la veille pour être 100% sûr de leur dispo
+    yesterday = now - timedelta(days=1)
+    date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # URL du flux Europe à 0.1 degré de précision (Modèle de calcul haute résolution)
-    url = f"https://meteo.fr{date_str}0000-{step_str}h-oper.grib2"
-    
-    # Sécurité : si le run de ce matin n'est pas encore totalement disponible, on bascule sur hier
-    try:
-        ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=3):
-            return url
-    except Exception:
-        yesterday = now - timedelta(days=1)
-        date_str = yesterday.strftime("%Y%m%d")
-        return f"https://meteo.fr{date_str}0000-{step_str}h-oper.grib2"
+    return f"https://meteo.fr{date_str}0000-{step_str}h-oper.grib2"
 
 @app.route('/')
 def index():
@@ -53,15 +42,16 @@ def scan_arpege():
     if not selected_steps:
         return jsonify({"error": "Cochez au moins une échéance."}), 400
         
-    first_step = sorted([int(s) for s in selected_steps])[0]
-    url = get_arpege_url(first_step)
+    steps_ints = sorted([int(s) for s in selected_steps])
+    first_step = steps_ints[0]
     
+    url = get_arpege_url(first_step)
     scan_path = os.path.join(UPLOAD_FOLDER, f"scan_arpege_{first_step}.grib2")
     if os.path.exists(scan_path): os.remove(scan_path)
     
     try:
         ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
         with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
             with open(scan_path, "wb") as f:
                 f.write(response.read())
@@ -80,7 +70,6 @@ def scan_arpege():
                 if short_name:
                     params_set.add(f"{name} ({short_name})")
                 if level is not None:
-                    # On affiche le niveau avec son type (ex: 850 hPa or surface)
                     levels_set.add(f"{level} ({lev_type})")
             except Exception:
                 continue
@@ -90,7 +79,7 @@ def scan_arpege():
         return jsonify({"success": True, "params": sorted(list(params_set)), "levels": sorted(list(levels_set))})
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur de liaison Météo-France : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur d'accès Météo-France Monde : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -103,11 +92,12 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels", [])
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
+    # Nettoyage propre et sécurisé des chaînes de texte reçues de l'interface
     selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
     selected_levels = [int(l.split("(")[0].strip()) for l in selected_levels_raw if "(" in l]
     
     total_steps = len(selected_steps)
-    output_filename = "crop_arpege.grib2"
+    output_filename = "crop_arpege_world.grib2"
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     if os.path.exists(output_path): os.remove(output_path)
     
@@ -121,7 +111,7 @@ def fetch_and_crop():
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 
                 try:
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
                     with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
@@ -132,7 +122,10 @@ def fetch_and_crop():
                             short_name = getattr(grb, 'shortName', '')
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
-                            if short_name in selected_params and level in selected_levels:
+                            param_match = short_name in selected_params if selected_params else True
+                            level_match = level in selected_levels if selected_levels else True
+                            
+                            if param_match and level_match:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
@@ -143,7 +136,7 @@ def fetch_and_crop():
                     if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                     
         PROGRESS = 100
-        return jsonify({"success": True, "download_url": f"/api/download/{output_filename}"})
+        return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
@@ -157,4 +150,4 @@ def download_file(filename):
     return "Fichier introuvable", 404
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001) # Port distinct pour les tests en local
+    app.run(debug=True, port=5001)
