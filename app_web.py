@@ -2,8 +2,7 @@ import sys
 import os
 import json
 import shutil
-import urllib.request
-import ssl
+from ftplib import FTP
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
@@ -16,37 +15,52 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_valid_ecmwf_url(step_val):
-    """Teste les dates récentes pour trouver le fichier GRIB disponible sur l'ECMWF"""
-    ctx = ssl._create_unverified_context()
-    step_str = f"{step_val:03d}"
-    
-    # En-têtes complets pour contourner les blocages de sécurité des serveurs européens
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Connection': 'close' # Force la fermeture pour éviter de bloquer le DNS de Render
-    }
-    
-    # Test d'aujourd'hui (0) à l'avant-veille (3)
-    for days_back in range(0, 4):
-        target_date = datetime.now() - timedelta(days=days_back)
-        date_str = target_date.strftime("%Y%m%d")
-        
-        url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
-        
-        try:
-            req = urllib.request.Request(url, method='HEAD', headers=headers)
-            with urllib.request.urlopen(req, context=ctx, timeout=4):
-                print(f"✅ Fichier ECMWF validé pour le : {date_str}")
-                return url
-        except Exception:
-            continue
-            
-    # Sécurité absolue : si le scan échoue (ex: serveurs ECMWF en maintenance), repli sur hier
+def download_ecmwf_ftp(step_val, target_path):
+    """Télécharge le fichier GRIB directement depuis le serveur FTP public de l'ECMWF"""
     yesterday = datetime.now() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
-    return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-sfc.grib2"
+    step_str = f"{step_val:03d}"
+    
+    # Nom du fichier sur le serveur FTP de l'ECMWF
+    ftp_filename = f"{date_str}0000-{step_str}h-oper-sfc.grib2"
+    
+    # Trajet exact dans les répertoires FTP ouverts de l'ECMWF
+    ftp_dir = f"/forecasts/{date_str}/00z/ifs/0p25/oper"
+    
+    print(f"⏳ Connexion FTP pour le fichier: {ftp_filename}")
+    
+    # Initialisation de la connexion FTP anonyme officielle
+    ftp = FTP()
+    try:
+        # Connexion au serveur de stockage de secours
+        ftp.connect("dissemination.ecmwf.int", timeout=20)
+        ftp.login("anonymous", "user@example.com") # Login public standard
+        ftp.cwd(ftp_dir)
+        
+        # Téléchargement binaire direct par morceaux
+        with open(target_path, "wb") as f:
+            ftp.retrbinary(f"RETR {ftp_filename}", f.write)
+            
+        print("✅ Téléchargement FTP réussi !")
+        return True
+    except Exception as e:
+        print(f"⚠️ Échec FTP principal, tentative sur le miroir data.ecmwf.int: {e}")
+        # Miroir secondaire si le premier est encombré
+        try:
+            ftp2 = FTP()
+            ftp2.connect("data.ecmwf.int", timeout=20)
+            ftp2.login("opendata", "user@example.com")
+            ftp2.cwd(ftp_dir)
+            with open(target_path, "wb") as f:
+                ftp2.retrbinary(f"RETR {ftp_filename}", f.write)
+            ftp2.quit()
+            return True
+        except Exception as e2:
+            print(f"❌ Tous les miroirs FTP ont échoué: {e2}")
+            raise Exception(f"Le catalogue ECMWF est indisponible pour le moment : {e2}")
+    finally:
+        try: ftp.quit()
+        except: pass
 
 @app.route('/')
 def index():
@@ -62,7 +76,7 @@ def clean_server_dir():
     try:
         shutil.rmtree(UPLOAD_FOLDER)
         os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        return jsonify({"success": True, "message": "Stockage cloud nettoyé avec succès !"})
+        return jsonify({"success": True, "message": "Stockage cloud nettoyé !"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -71,25 +85,19 @@ def scan_ecmwf():
     data = request.json
     selected_steps = data.get("steps", [])
     if not selected_steps:
-        return jsonify({"error": "Veuillez cocher au moins une échéance pour l'analyse."}), 400
+        return jsonify({"error": "Veuillez cocher au moins une échéance."}), 400
         
     steps_ints = sorted([int(s) for s in selected_steps])
     first_step = steps_ints[0]
     
-    url = get_valid_ecmwf_url(first_step)
     scan_filename = f"scan_step_{first_step}.grib2"
     scan_path = os.path.join(UPLOAD_FOLDER, scan_filename)
     
     if os.path.exists(scan_path): os.remove(scan_path)
     
     try:
-        ctx = ssl._create_unverified_context()
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'}
-        req = urllib.request.Request(url, headers=headers)
-        
-        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-            with open(scan_path, "wb") as f:
-                f.write(response.read())
+        # Appel du téléchargement FTP (insensible aux blocages DNS HTTP)
+        download_ecmwf_ftp(first_step, scan_path)
                 
         fin = pygrib.open(scan_path)
         params_set = set()
@@ -119,7 +127,7 @@ def scan_ecmwf():
         
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès au catalogue : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur d'accès au catalogue FTP : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -146,21 +154,16 @@ def fetch_and_crop():
     if os.path.exists(output_path): os.remove(output_path)
     
     try:
-        ctx = ssl._create_unverified_context()
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'}
-        
         with open(output_path, "wb") as fout:
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_valid_ecmwf_url(step_val)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_step_{step_val}.grib2")
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    req = urllib.request.Request(url, headers=headers)
-                    with urllib.request.urlopen(req, context=ctx, timeout=35) as response:
-                        with open(chunk_raw_path, "wb") as f:
-                            f.write(response.read())
+                    # Traitement séquentiel par flux FTP
+                    download_ecmwf_ftp(step_val, chunk_raw_path)
                             
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
