@@ -79,7 +79,7 @@ def fetch_and_crop():
                 step_str = f"{step_val:03d}"
                 
                 # URL brute de stockage de l'échéance IFS mondiale gratuite de l'ECMWF
-                url = f"https://ecmwf.int{date_str}/00z/ifs/0p40/oper/{date_str}0000-{step_str}h-oper-fc.grib2"
+                url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}h-oper-fc.grib2"
                 
                 chunk_raw_filename = f"temp_step_{step_val}.grib2"
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, chunk_raw_filename)
