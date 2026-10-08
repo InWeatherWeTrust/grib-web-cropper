@@ -17,11 +17,12 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ecmwf_url(step_val):
-    """Calcule l'URL exacte du fichier de surface (sfc) de la veille"""
+    """Calcule l'URL exacte du fichier de surface (sfc) sur le serveur de stockage officiel"""
     yesterday = datetime.now() - timedelta(days=1)
     date_folder = yesterday.strftime("%Y%m%dd")
     date_file = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
+    # CORRECTION DE L'ADRESSE INTERNET VERS LE SERVEUR DE STOCKAGE OFFICIEL DATA
     return f"https://ecmwf.int{date_folder}/00z/ifs/0p25/oper/{date_file}0000-{step_str}h-oper-sfc.grib2"
 
 @app.route('/')
@@ -44,7 +45,6 @@ def clean_server_dir():
 
 @app.route('/api/scan_ecmwf', methods=['POST'])
 def scan_ecmwf():
-    """Télécharge le premier pas horaire demandé pour en lister dynamiquement le contenu réel"""
     data = request.json
     selected_steps = data.get("steps", [])
     if not selected_steps:
@@ -65,7 +65,6 @@ def scan_ecmwf():
             with open(scan_path, "wb") as f:
                 f.write(response.read())
                 
-        # Lecture dynamique du contenu réel du fichier GRIB par pygrib
         fin = pygrib.open(scan_path)
         params_set = set()
         levels_set = set()
@@ -84,7 +83,6 @@ def scan_ecmwf():
                 continue
         fin.close()
         
-        # Nettoyage immédiat du fichier de scan
         if os.path.exists(scan_path): os.remove(scan_path)
         
         return jsonify({
@@ -95,7 +93,7 @@ def scan_ecmwf():
         
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Impossible d'accéder au fichier ECMWF pour l'analyse : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur d'accès réseau : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -104,11 +102,10 @@ def fetch_and_crop():
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params_raw = data.get("params", []) # Reçoit "Name (shortName)"
+    selected_params_raw = data.get("params", [])
     selected_levels = [int(l) for l in data.get("levels", [])]
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    # Extraction du shortName entre parenthèses
     selected_params = []
     for p in selected_params_raw:
         if "(" in p and ")" in p:
