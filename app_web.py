@@ -16,6 +16,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
+def get_ecmwf_url(step_val):
+    """Calcule l'URL exacte du fichier de surface (sfc) de la veille"""
+    yesterday = datetime.now() - timedelta(days=1)
+    date_folder = yesterday.strftime("%Y%m%dd")
+    date_file = yesterday.strftime("%Y%m%d")
+    step_str = f"{step_val:03d}"
+    return f"https://ecmwf.int{date_folder}/00z/ifs/0p25/oper/{date_file}0000-{step_str}h-oper-sfc.grib2"
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -34,6 +42,61 @@ def clean_server_dir():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/scan_ecmwf', methods=['POST'])
+def scan_ecmwf():
+    """Télécharge le premier pas horaire demandé pour en lister dynamiquement le contenu réel"""
+    data = request.json
+    selected_steps = data.get("steps", [])
+    if not selected_steps:
+        return jsonify({"error": "Veuillez cocher au moins une échéance pour l'analyse."}), 400
+        
+    first_step = sorted([int(s) for s in selected_steps])[0]
+    url = get_ecmwf_url(first_step)
+    
+    scan_filename = f"scan_step_{first_step}.grib2"
+    scan_path = os.path.join(UPLOAD_FOLDER, scan_filename)
+    
+    if os.path.exists(scan_path): os.remove(scan_path)
+    
+    try:
+        ctx = ssl._create_unverified_context()
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+            with open(scan_path, "wb") as f:
+                f.write(response.read())
+                
+        # Lecture dynamique du contenu réel du fichier GRIB par pygrib
+        fin = pygrib.open(scan_path)
+        params_set = set()
+        levels_set = set()
+        
+        for grb in fin:
+            try:
+                name = getattr(grb, 'name', 'Unknown')
+                short_name = getattr(grb, 'shortName', '')
+                level = getattr(grb, 'level', 0)
+                
+                if short_name:
+                    params_set.add(f"{name} ({short_name})")
+                if level is not None:
+                    levels_set.add(int(level))
+            except Exception:
+                continue
+        fin.close()
+        
+        # Nettoyage immédiat du fichier de scan
+        if os.path.exists(scan_path): os.remove(scan_path)
+        
+        return jsonify({
+            "success": True,
+            "params": sorted(list(params_set)),
+            "levels": sorted(list(levels_set))
+        })
+        
+    except Exception as e:
+        if os.path.exists(scan_path): os.remove(scan_path)
+        return jsonify({"error": f"Impossible d'accéder au fichier ECMWF pour l'analyse : {str(e)}"}), 500
+
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
     global PROGRESS
@@ -41,46 +104,35 @@ def fetch_and_crop():
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params = data.get("params")  # Ex: ['u', 'v']
-    selected_levels = [int(l) for l in data.get("levels", [])]  # Ex: [1000, 850]
+    selected_params_raw = data.get("params", []) # Reçoit "Name (shortName)"
+    selected_levels = [int(l) for l in data.get("levels", [])]
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
+    # Extraction du shortName entre parenthèses
+    selected_params = []
+    for p in selected_params_raw:
+        if "(" in p and ")" in p:
+            selected_params.append(p.split("(")[-1].split(")")[0])
+        else:
+            selected_params.append(p)
+            
     total_steps = len(selected_steps)
-    if total_steps == 0:
-        return jsonify({"error": "Veuillez sélectionner au moins une échéance."}), 400
-        
     output_filename = "crop_ecmwf.grib2"
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     
-    if os.path.exists(output_path): 
-        os.remove(output_path)
-        
-    # Calcul dynamique de la date d'hier au format AAAAMMJJ (Run stable 100% archivé)
-    yesterday = datetime.now() - timedelta(days=1)
-    date_folder = yesterday.strftime("%Y%m%dd") # Dossier avec 'd' (ex: 20261007d)
-    date_file = yesterday.strftime("%Y%m%d")    # Fichier sans 'd' (ex: 20261007)
+    if os.path.exists(output_path): os.remove(output_path)
     
     try:
         ctx = ssl._create_unverified_context()
         
         with open(output_path, "wb") as fout:
-            # Traitement séquentiel direct par URL
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                # Formatage de l'échéance à 3 chiffres (ex: 12 -> 012, 24 -> 024)
-                step_str = f"{step_val:03d}"
-                
-                # VÉRITABLE URL DIRECTE DU SERVEUR DE STOCKAGE BRUT DE L'ECMWF (Modèle IFS 0.25° PL)
-                url = f"https://ecmwf.int{date_folder}/00z/ifs/0p25/oper/{date_file}0000-{step_str}h-oper-pl.grib2"
-                
-                chunk_raw_filename = f"temp_step_{step_val}.grib2"
-                chunk_raw_path = os.path.join(UPLOAD_FOLDER, chunk_raw_filename)
-                
-                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                url = get_ecmwf_url(step_val)
+                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_step_{step_val}.grib2")
                 
                 try:
-                    # Téléchargement HTTP direct ultra-rapide (Bypass complet de la file d'attente)
                     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                     with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                         with open(chunk_raw_path, "wb") as f:
@@ -89,7 +141,6 @@ def fetch_and_crop():
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
                         
-                    # Filtrage et découpe immédiate par pygrib
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
@@ -100,34 +151,24 @@ def fetch_and_crop():
                             level_match = level in selected_levels if selected_levels else True
                             
                             if param_match and level_match:
-                                sub_data, lats, lons = grb.data(
-                                    lat1=bounds["s"], lat2=bounds["n"], 
-                                    lon1=bounds["w"], lon2=bounds["e"]
-                                )
+                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
                         except Exception:
                             continue
                     fin.close()
-                    
-                except Exception as e:
-                    print(f"Erreur sur le pas {step_val}: {e}")
-                    continue
                 finally:
-                    if os.path.exists(chunk_raw_path):
-                        os.remove(chunk_raw_path)
-                        
+                    if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                    
         PROGRESS = 100
-        
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             return jsonify({"error": "Aucune donnée n'a pu être extraite."}), 400
             
         return jsonify({"success": True, "download_url": f"/api/download/{output_filename}"})
-        
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur lors du traitement direct : {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
