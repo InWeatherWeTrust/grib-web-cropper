@@ -248,7 +248,12 @@
             })
             .then(res => res.json()).then(data => {
                 clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
-                if (data.success) { window.location.href = data.download_url; } else { alert("❌ " + data.error); }
+                if (data.success) { 
+                    // CORRECTION ICI : Ajout du préfixe /cep pour télécharger au bon endroit
+                    window.location.href = "/cep" + data.download_url; 
+                } else { 
+                    alert("❌ " + data.error); 
+                }
             });
         };
     </script>
