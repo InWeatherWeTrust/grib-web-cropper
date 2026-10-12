@@ -91,7 +91,7 @@ def scan_arpege():
     return jsonify({
         "success": True,
         "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split()[0].isdigit() else 0)
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -116,14 +116,12 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            parts = str(l).strip().split()
-            if parts and parts[0].isdigit():
-                selected_levels.append(int(parts[0]))
-            elif "surface" in str(l).lower():
+            val_txt = str(l).strip().split()[0]
+            if val_txt.isdigit():
+                selected_levels.append(int(val_txt))
+        except:
+            if "surface" in str(l).lower():
                 selected_levels.append(0)
-        except Exception as e:
-            print(f"Erreur de conversion du niveau {l}: {e}")
-            continue
         
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
@@ -138,16 +136,26 @@ def fetch_and_crop():
                 PROGRESS = int((step_index / total_steps) * 100)
                 
                 url = get_ecmwf_arpege_url(step_val, levtype)
+                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                req = urllib.request.Request(url)
-                req.add_header('Host', 'data.ecmwf.int')
-                req.add_header('User-Agent', 'Mozilla/5.0')
-                req.add_header('Connection', 'keep-alive')
-                
-                # ÉTAPE UNIQUE : Streaming et filtrage en tâche de fond directe via pygrib.open(url)
-                # On ne stocke pas le fichier temporaire lourd, pygrib lit directement le flux réseau
+                # ÉTAPE 1 : Téléchargement propre du fichier complet via urllib (Négociation d'en-tête Host OK)
                 try:
-                    fin = pygrib.open(url)
+                    req = urllib.request.Request(url)
+                    req.add_header('Host', 'data.ecmwf.int')
+                    req.add_header('User-Agent', 'Mozilla/5.0')
+                    req.add_header('Connection', 'close')
+                    
+                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
+                        with open(chunk_raw_path, "wb") as f:
+                            f.write(response.read())
+                except Exception as step_error:
+                    print(f"Saut de l'échéance {step_val} : {step_error}")
+                    continue
+                            
+                # ÉTAPE 2 : Découpe locale par pygrib sur le fichier physique présent sur le disque
+                if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
+                    fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
                             short_name = getattr(grb, 'shortName', '')
@@ -164,13 +172,11 @@ def fetch_and_crop():
                         except Exception:
                             continue
                     fin.close()
-                except Exception as step_error:
-                    print(f"Saut de l'échéance {step_val} : {step_error}")
-                    continue
+                    os.remove(chunk_raw_path)
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez votre zone géographique."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez votre zone géographique ou vos filtres."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
