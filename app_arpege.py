@@ -20,12 +20,25 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ecmwf_arpege_url(step_val):
-    """Calcule l'URL exacte du fichier brut ARPEGE Monde stocké à l'ECMWF"""
-    yesterday = datetime.utcnow() - timedelta(days=1)
-    date_str = yesterday.strftime("%Y%m%d")
+    """Calcule l'URL exacte du run 00Z le plus récent et disponible à coup sûr"""
+    ctx = ssl._create_unverified_context()
+    step_str = f"{step_val:03d}"
     
-    # Formatage de l'échéance exigé (ex: 12h, 24h)
-    return f"https://data.ecmwf.int/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_val}h-oper-fc.grib2"
+    # 1. On tente d'abord de récupérer le run de 00Z d'AUJOURD'HUI
+    today_str = datetime.utcnow().strftime("%Y%m%d")
+    url_today = f"https://ecmwf.int{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_str}h-oper-fc.grib2"
+    
+    try:
+        # On teste par une requête HEAD ultra-rapide si le run d'aujourd'hui est en ligne
+        req = urllib.request.Request(url_today, method='HEAD', headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=3):
+            print(f"🎯 Run ARPEGE 00Z d'aujourd'hui trouvé ({today_str})")
+            return url_today
+    except Exception:
+        # 2. Si le run d'aujourd'hui n'est pas encore publié, repli sur le 00Z d'HIER
+        yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
+        print(f"⚠️ Run d'aujourd'hui indisponible, repli sur le 00Z d'hier ({yesterday_str})")
+        return f"https://ecmwf.int{yesterday_str}/00z/arpege/0p25/oper/{yesterday_str}0000-{step_str}h-oper-fc.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -55,7 +68,7 @@ def scan_arpege():
     
     try:
         ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
         
         with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
             with open(scan_path, "wb") as f:
@@ -75,7 +88,7 @@ def scan_arpege():
                 if short_name:
                     params_set.add(f"{name} ({short_name})")
                 if level is not None:
-                    levels_set.add(f"{level} ({lev_type})")
+                    levels_set.add(int(level))
             except Exception:
                 continue
         fin.close()
@@ -117,7 +130,7 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'})
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
                     with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
