@@ -41,15 +41,15 @@ def get_arpege_routing_strategy(step_val, levtype="sfc"):
     url_today = f"https://{ecmwf_static_ip}/forecasts/{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_val:03d}h-oper-{suffix}.grib2"
     
     if check_url_availability(url_today):
-        print(f"🎯 [STRATÉGIE A] Run ARPEGE 00Z d'aujourd'hui disponible ({today_str}). Échéance demandée : +{step_val}h")
+        print(f"🎯 [STRATÉGIE A] Run ARPEGE 00Z d'aujourd'hui disponible ({today_str}). Échéance : +{step_val}h")
         return url_today, step_val
         
-    # 2. STRATÉGIE B : Run 12Z d'HIER (Repli avec décalage temporel intelligent de +12h)
+    # 2. STRATÉGIE B : Run 12Z d'HIER (Repli avec décalage temporel de +12h)
     yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
-    adjusted_step = step_val + 12 # On ajoute 12h de profondeur pour compenser le retard du run
+    adjusted_step = step_val + 12
     url_yesterday = f"https://{ecmwf_static_ip}/forecasts/{yesterday_str}/12z/arpege/0p25/oper/{yesterday_str}1200-{adjusted_step:03d}h-oper-{suffix}.grib2"
     
-    print(f"⚠️ [STRATÉGIE B] Run d'aujourd'hui absent. Bascule sur 12Z d'hier ({yesterday_str}). Échéance ajustée : +{adjusted_step}h")
+    print(f"⚠️ [STRATÉGIE B] Bascule automatique sur 12Z d'hier ({yesterday_str}). Échéance ajustée : +{adjusted_step}h")
     return url_yesterday, adjusted_step
 
 @app.route('/')
@@ -64,41 +64,38 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère dynamiquement les listes conformes à la nomenclature de stockage de l'ECMWF"""
+    """Génère dynamiquement les listes de Force/Direction conformes au descriptif technique Météo-France"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
+        # Alignement sur le paquet IP2 de Météo-France (Force et Direction en Altitude hPa)
         raw_grib_index = [
-            {"name": "U component of wind", "shortName": "u", "level": 700},
-            {"name": "V component of wind", "shortName": "v", "level": 700},
-            {"name": "Geopotential height", "shortName": "gh", "level": 700},
-            {"name": "Temperature", "shortName": "t", "level": 700},
+            {"name": "Wind speed (FF)", "shortName": "ws", "level": 700},
+            {"name": "Wind direction (DD)", "shortName": "wdir", "level": 700},
+            {"name": "Geopotential height (Z)", "shortName": "gh", "level": 700},
             
-            {"name": "U component of wind", "shortName": "u", "level": 500},
-            {"name": "V component of wind", "shortName": "v", "level": 500},
-            {"name": "Geopotential height", "shortName": "gh", "level": 500},
-            {"name": "Temperature", "shortName": "t", "level": 500},
+            {"name": "Wind speed (FF)", "shortName": "ws", "level": 500},
+            {"name": "Wind direction (DD)", "shortName": "wdir", "level": 500},
+            {"name": "Geopotential height (Z)", "shortName": "gh", "level": 500},
             
-            {"name": "U component of wind", "shortName": "u", "level": 400},
-            {"name": "V component of wind", "shortName": "v", "level": 400},
-            {"name": "Geopotential height", "shortName": "gh", "level": 400},
+            {"name": "Wind speed (FF)", "shortName": "ws", "level": 400},
+            {"name": "Wind direction (DD)", "shortName": "wdir", "level": 400},
             
-            {"name": "U component of wind", "shortName": "u", "level": 300},
-            {"name": "V component of wind", "shortName": "v", "level": 300},
-            {"name": "Geopotential height", "shortName": "gh", "level": 300},
+            {"name": "Wind speed (FF)", "shortName": "ws", "level": 300},
+            {"name": "Wind direction (DD)", "shortName": "wdir", "level": 300},
             
-            {"name": "U component of wind", "shortName": "u", "level": 250},
-            {"name": "V component of wind", "shortName": "v", "level": 250},
-            {"name": "Geopotential height", "shortName": "gh", "level": 250}
+            {"name": "Wind speed (FF)", "shortName": "ws", "level": 250},
+            {"name": "Wind direction (DD)", "shortName": "wdir", "level": 250}
         ]
     else:
+        # Alignement sur le paquet SP1/SP2 de Météo-France (Force, Direction et Pression en surface)
         raw_grib_index = [
-            {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
-            {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
-            {"name": "Mean sea level pressure", "shortName": "msl", "level": 0},
-            {"name": "2m temperature", "shortName": "2t", "level": 0},
-            {"name": "Total precipitation", "shortName": "tp", "level": 0}
+            {"name": "10m Wind Speed (FF)", "shortName": "ws", "level": 10},
+            {"name": "10m Wind Direction (DD)", "shortName": "wdir", "level": 10},
+            {"name": "Mean sea level pressure (Pmer)", "shortName": "msl", "level": 0},
+            {"name": "2m temperature (T)", "shortName": "2t", "level": 2},
+            {"name": "Total precipitation (PRECIP)", "shortName": "tp", "level": 0}
         ]
     
     params_set = set()
@@ -106,7 +103,7 @@ def scan_arpege():
     
     for item in raw_grib_index:
         params_set.add(f"{item['name']} ({item['shortName']})")
-        if item['level'] == 0:
+        if item['level'] in:
             levels_set.add("0 (surface)")
         else:
             levels_set.add(f"{item['level']} hPa")
@@ -114,7 +111,7 @@ def scan_arpege():
     return jsonify({
         "success": True,
         "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()) if x.split() and x.split().isdigit() else 0)
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -126,7 +123,6 @@ def fetch_and_crop():
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
     selected_params_raw = data.get("params",)
-    selected_levels_raw = data.get("levels",)
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
     selected_params = []
@@ -135,16 +131,6 @@ def fetch_and_crop():
             selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
         else:
             selected_params.append(p.strip().lower())
-            
-    selected_levels = []
-    for l in selected_levels_raw:
-        try:
-            parts = str(l).strip().split()[0]
-            if parts.isdigit():
-                selected_levels.append(int(parts))
-        except:
-            if "surface" in str(l).lower():
-                selected_levels.append(0)
         
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
@@ -158,8 +144,8 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                # APPEL DE L'AIGUILLEUR TEMPOREL INTELLIGENT
-                url, target_step_binaire = get_arpege_routing_strategy(step_val, levtype)
+                # Récupération dynamique du bon run et ajustement d'échéance (+12h si run de la veille)
+                url, target_step = get_arpege_routing_strategy(step_val, levtype)
                 
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
@@ -182,13 +168,13 @@ def fetch_and_crop():
                     for grb in fin:
                         try:
                             short_name = str(getattr(grb, 'shortName', '')).lower()
-                            level = int(grb.level if hasattr(grb, 'level') else 0)
-                            is_surf = "surface" in str(grb.typeOfLevel).lower()
                             
+                            # TOLÉRANCE ET MULTI-MATCHING FORCE / DIRECTION DU VENT
                             match_p = short_name in selected_params
-                            match_l = level in selected_levels or (is_surf and 0 in selected_levels)
+                            if not match_p and short_name in ['wdir', 'vdir'] and 'wdir' in selected_params: match_p = True
+                            if not match_p and short_name in ['ws', 'gspd'] and 'ws' in selected_params: match_p = True
                             
-                            if match_p and match_l:
+                            if match_p:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
@@ -199,7 +185,7 @@ def fetch_and_crop():
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez l'état de parution des fichiers à l'ECMWF."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez l'état de parution des paquets Météo-France."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
