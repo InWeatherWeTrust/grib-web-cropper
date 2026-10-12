@@ -47,23 +47,22 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère dynamiquement les listes en lisant l'index structurel officiel ARPEGE Monde"""
+    """Génère dynamiquement les listes en lisant l'index structurel complet ARPEGE Monde"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
+        # Index exhaustif des niveaux d'altitude exigés pour le routage de hauteur
         raw_grib_index = [
             {"name": "U-component of wind", "shortName": "u", "level": 1000},
             {"name": "V-component of wind", "shortName": "v", "level": 1000},
             {"name": "Geopotential height", "shortName": "gh", "level": 1000},
             {"name": "Temperature", "shortName": "t", "level": 1000},
-            {"name": "Relative humidity", "shortName": "r", "level": 1000},
             
             {"name": "U-component of wind", "shortName": "u", "level": 850},
             {"name": "V-component of wind", "shortName": "v", "level": 850},
             {"name": "Geopotential height", "shortName": "gh", "level": 850},
             {"name": "Temperature", "shortName": "t", "level": 850},
-            {"name": "Relative humidity", "shortName": "r", "level": 850},
             
             {"name": "U-component of wind", "shortName": "u", "level": 700},
             {"name": "V-component of wind", "shortName": "v", "level": 700},
@@ -75,9 +74,20 @@ def scan_arpege():
             {"name": "Geopotential height", "shortName": "gh", "level": 500},
             {"name": "Temperature", "shortName": "t", "level": 500},
             
+            {"name": "U-component of wind", "shortName": "u", "level": 400},
+            {"name": "V-component of wind", "shortName": "v", "level": 400},
+            {"name": "Geopotential height", "shortName": "gh", "level": 400},
+            {"name": "Temperature", "shortName": "t", "level": 400},
+            
+            {"name": "U-component of wind", "shortName": "u", "level": 300},
+            {"name": "V-component of wind", "shortName": "v", "level": 300},
+            {"name": "Geopotential height", "shortName": "gh", "level": 300},
+            {"name": "Temperature", "shortName": "t", "level": 300},
+            
             {"name": "U-component of wind", "shortName": "u", "level": 250},
             {"name": "V-component of wind", "shortName": "v", "level": 250},
-            {"name": "Geopotential height", "shortName": "gh", "level": 250}
+            {"name": "Geopotential height", "shortName": "gh", "level": 250},
+            {"name": "Temperature", "shortName": "t", "level": 250}
         ]
     else:
         raw_grib_index = [
@@ -103,6 +113,7 @@ def scan_arpege():
         "params": sorted(list(params_set)),
         "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split()[0].isdigit() else 0)
     })
+
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
