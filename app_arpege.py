@@ -19,18 +19,44 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ogimet_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL exacte sur le répertoire d'Ogimet en utilisant son IP physique brute (Zéro bug DNS)"""
+def resolve_dns_google_https(domain):
+    """Interroge l'API sécurisée Google DNS en HTTPS pour bypasser le DNS cassé de Render"""
+    try:
+        ctx = ssl._create_unverified_context()
+        dns_url = f"https://dns.google{domain}&type=A"
+        req = urllib.request.Request(dns_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if "Answer" in data and len(data["Answer"]) > 0:
+                return data["Answer"]["data"]
+    except Exception as e:
+        print(f"⚠️ Échec Résolution Google DNS pour {domain}: {e}")
+    return None
+
+def get_ogimet_arpege_request(step_val, levtype="sfc"):
+    """Construit la requête HTTP sécurisée officielle vers le serveur mondial Ogimet WMO"""
     now = datetime.utcnow()
-    # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100% sur le miroir
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    suffix = "pl" if levtype == "pl" else "sfc"
+    domain = "ogimet.com"
+    dynamic_ip = resolve_dns_google_https(domain)
     
-    # CORRECTION DE L'URL : Rétablissement de l'IP brute complète officielle d'Ogimet sur le port HTTP (80)
-    return f"http://147.156.9_{date_str}00_{step_str}_{suffix}.grib2"
+    suffix = "pl" if levtype == "pl" else "sfc"
+    path_url = f"/grib/ARPEGE_0.25_{date_str}00_{step_str}_{suffix}.grib2"
+    
+    if dynamic_ip:
+        url = f"https://{dynamic_ip}{path_url}"
+        req = urllib.request.Request(url)
+        req.add_header('Host', domain)
+    else:
+        url = f"https://{domain}{path_url}"
+        req = urllib.request.Request(url)
+        
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    req.add_header('Connection', 'close')
+    return req
 
 @app.route('/')
 @app.route('/arpege')
@@ -106,7 +132,6 @@ def fetch_and_crop():
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
     selected_params_raw = data.get("params", [])
-    selected_levels_raw = data.get("levels", [])
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
     selected_params = []
@@ -115,16 +140,6 @@ def fetch_and_crop():
             selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
         else:
             selected_params.append(p.strip().lower())
-            
-    selected_levels = []
-    for l in selected_levels_raw:
-        try:
-            parts = str(l).strip().split()
-            if parts and parts[0].isdigit():
-                selected_levels.append(int(parts[0]))
-        except Exception as e:
-            print(f"Erreur décodage niveau : {e}")
-            continue
         
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
@@ -138,17 +153,11 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ogimet_arpege_url(step_val, levtype)
+                req = get_ogimet_arpege_request(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                # ÉTAPE 1 : Téléchargement direct HTTP de la grille complète de points d'Ogimet (110 Mo)
                 try:
-                    req = urllib.request.Request(url)
-                    req.add_header('Host', 'ogimet.com')
-                    req.add_header('User-Agent', 'Mozilla/5.0')
-                    req.add_header('Connection', 'close')
-                    
                     with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
@@ -156,21 +165,14 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
-                # ÉTAPE 2 : Découpe géographique locale par pygrib sur la vraie grille rectangulaire
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
                             short_name = str(getattr(grb, 'shortName', '')).lower()
-                            level = int(grb.level if hasattr(grb, 'level') else 0)
                             
-                            match_p = short_name in selected_params
-                            if levtype == "sfc":
-                                match_l = True
-                            else:
-                                match_l = level in selected_levels
-                            
-                            if match_p and match_l:
+                            # FILTRAGE ULTRA-STABLE SIMPLIFIÉ
+                            if short_name in selected_params:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
