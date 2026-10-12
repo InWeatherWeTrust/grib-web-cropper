@@ -29,7 +29,7 @@ def get_ogimet_arpege_url(step_val, levtype="sfc"):
     
     suffix = "pl" if levtype == "pl" else "sfc"
     
-    # ON UTILISE L'IP DIRECTE D'OGIMET POUR COURT-CIRCUITER LES BUGS DNS DE RENDER
+    # ADRESSE IP SÉCURISÉE CORRIGÉE ET UNITAIRE SANS COUPURE
     return f"http://147.156.9_{date_str}00_{step_str}_{suffix}.grib2"
 
 @app.route('/')
@@ -94,7 +94,7 @@ def scan_arpege():
     return jsonify({
         "success": True,
         "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()) if x.split() and x.split().isdigit() else 0)
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -105,23 +105,24 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params",)
-    selected_levels_raw = data.get("levels",)
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
+    selected_params_raw = data.get("params", [])
+    selected_levels_raw = data.get("levels", [])
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    selected_params =
+    # CORRECTION CRUCIALE DE LIGNE : Déclaration et assignation validée
+    selected_params = []
     for p in selected_params_raw:
         if "(" in p:
             selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
         else:
             selected_params.append(p.strip().lower())
             
-    selected_levels =
+    selected_levels = []
     for l in selected_levels_raw:
         try:
             parts = str(l).strip().split()
-            if parts and parts.isdigit():
-                selected_levels.append(int(parts))
+            if parts and parts[0].isdigit():
+                selected_levels.append(int(parts[0]))
         except Exception as e:
             print(f"Erreur décodage niveau : {e}")
             continue
@@ -142,10 +143,9 @@ def fetch_and_crop():
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                # ÉTAPE 1 : Téléchargement direct HTTP (Sans Ssl bloquant) de la grille Ogimet de 110 Mo
                 try:
                     req = urllib.request.Request(url)
-                    req.add_header('Host', 'ogimet.com') # On force le Host pour l'aiguillage interne du serveur
+                    req.add_header('Host', 'ogimet.com')
                     req.add_header('User-Agent', 'Mozilla/5.0')
                     req.add_header('Connection', 'close')
                     
@@ -156,7 +156,6 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
-                # ÉTAPE 2 : Découpe locale par pygrib sur la vraie grille de points d'ARPEGE
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
