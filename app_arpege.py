@@ -4,6 +4,7 @@ import json
 import shutil
 import urllib.request
 import ssl
+import tempfile
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
@@ -19,21 +20,16 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_arpege_aws_url(step_val, levtype="sfc"):
-    """Calcule l'URL exacte du modèle ARPEGE 0.25 sur le stockage public AWS officiel de Météo-France"""
-    now = datetime.utcnow()
-    # On prend le run de la veille pour garantir une disponibilité immédiate à 100% des fichiers sur AWS
-    yesterday = now - timedelta(days=1)
+def get_ecmwf_arpege_url(step_val, levtype="sfc"):
+    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF"""
+    yesterday = datetime.utcnow() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
+    ecmwf_static_ip = "136.156.129.245"
     
-    # URL OFFICIELLE HAUT DÉBIT AWS METEO-FRANCE OPEN DATA (Zéro blocage DNS, Zéro Connexion Refused)
-    if levtype == "pl":
-        # Package Altitude
-        return f"https://meteofrance.fr_{date_str}0000_{step_str}h_pl.grib2"
-    else:
-        # Package Surface
-        return f"https://meteofrance.fr_{date_str}0000_{step_str}h_sfc.grib2"
+    # Bascule dynamique officielle de l'ECMWF pour ARPEGE Monde 0.25°
+    suffix = "pl" if levtype == "pl" else "fc"
+    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -52,7 +48,7 @@ def scan_arpege():
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        # Index exhaustif des niveaux d'altitude exigés pour le routage de hauteur
+        # Index exhaustif incluant tous vos niveaux verticaux demandés
         raw_grib_index = [
             {"name": "U-component of wind", "shortName": "u", "level": 1000},
             {"name": "V-component of wind", "shortName": "v", "level": 1000},
@@ -114,7 +110,6 @@ def scan_arpege():
         "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split()[0].isdigit() else 0)
     })
 
-
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
     global PROGRESS
@@ -154,12 +149,16 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_arpege_aws_url(step_val, levtype)
+                url = get_ecmwf_arpege_url(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
+                    req = urllib.request.Request(url)
+                    req.add_header('Host', 'data.ecmwf.int')
+                    req.add_header('User-Agent', 'Mozilla/5.0')
+                    req.add_header('Connection', 'close')
+                    
                     with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
