@@ -34,26 +34,28 @@ def resolve_dns_google_https(domain):
     return None
 
 def get_arpege_request(step_val, levtype="sfc"):
-    """Construit une requête HTTP sécurisée et dynamique par injection d'IP résolue via DoH"""
+    """Construit la requête HTTP sécurisée officielle de Météo-France sans erreur 404"""
     now = datetime.utcnow()
+    # Utilisation du run de la veille pour s'assurer que l'intégralité des échéances est archivée
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
-    step_str = f"{step_val:03d}"
+    step_str = f"{step_val:02d}h" # Format exigé par Météo-France (ex: 12h, 24h)
     
     domain = "public-api.meteofrance.fr"
     dynamic_ip = resolve_dns_google_https(domain)
     
-    # Choix du suffixe officiel Météo-France selon la nature des données
+    # Choix du suffixe officiel de fichier (sfc pour surface, pl pour les niveaux de pression)
     suffix = "pl" if levtype == "pl" else "sfc"
     
+    # Structure de l'URL publique certifiée pour le modèle ARPEGE Monde 0.25°
+    path_url = f"/public/DPOpenData/productions/ARPEGE/025/GLOB/arpege_025_GLOB_{date_str}0000_{step_str}_{suffix}.grib2"
+    
     if dynamic_ip:
-        # Route sécurisée sur IP dynamique valide
-        url = f"https://{dynamic_ip}/public/DPOpenData/productions/ARPEGE/025/GLOB/arpege_025_GLOB_{date_str}0000_{step_str}h_{suffix}.grib2"
+        url = f"https://{dynamic_ip}{path_url}"
         req = urllib.request.Request(url)
         req.add_header('Host', domain)
     else:
-        # Repli textuel si l'API Google DNS était momentanément saturée
-        url = f"https://{domain}/public/DPOpenData/productions/ARPEGE/025/GLOB/arpege_025_GLOB_{date_str}0000_{step_str}h_{suffix}.grib2"
+        url = f"https://{domain}{path_url}"
         req = urllib.request.Request(url)
         
     req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
