@@ -78,11 +78,10 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params", [])
-    selected_levels_raw = data.get("levels", [])
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    selected_params_raw = data.get("params",)
+    selected_levels_raw = data.get("levels",)
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
-    # Correction des listes de filtrage
     selected_params = []
     for p in selected_params_raw:
         if "(" in p:
@@ -103,45 +102,95 @@ def fetch_and_crop():
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     if os.path.exists(output_path): os.remove(output_path)
     
+    ctx = ssl._create_unverified_context()
+    
     try:
-        ctx = ssl._create_unverified_context()
         with open(output_path, "wb") as fout:
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
                 url = get_ecmwf_arpege_url(step_val, levtype)
-                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
-                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                req = urllib.request.Request(url)
-                req.add_header('Host', 'data.ecmwf.int')
-                req.add_header('User-Agent', 'Mozilla/5.0')
-                req.add_header('Connection', 'close')
+                # ÉTAPE 1 : On télécharge d'abord uniquement l'index (les 10 premiers Mo) 
+                # pour localiser la position exacte des messages demandés dans le fichier géant
+                header_path = os.path.join(UPLOAD_FOLDER, f"temp_hdr_{step_val}.grib2")
+                req_idx = urllib.request.Request(url)
+                req_idx.add_header('Host', 'data.ecmwf.int')
+                req_idx.add_header('Range', 'bytes=0-10485760')
+                req_idx.add_header('Connection', 'close')
                 
-                with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
-                    with open(chunk_raw_path, "wb") as f:
-                        f.write(response.read())
-                        
-                fin = pygrib.open(chunk_raw_path)
+                try:
+                    with urllib.request.urlopen(req_idx, context=ctx, timeout=20) as resp:
+                        with open(header_path, "wb") as f:
+                            f.write(resp.read())
+                except Exception as e:
+                    print(f"Erreur d'indexation sur le pas {step_val}: {e}")
+                    continue
+                
+                # ÉTAPE 2 : Analyse de l'index localisé pour lister les "offsets" (les adresses en octets)
+                targets_offsets = []
+                fin = pygrib.open(header_path)
                 for grb in fin:
                     try:
                         short_name = getattr(grb, 'shortName', '')
                         level = int(grb.level if hasattr(grb, 'level') else 0)
+                        is_surf = "surface" in str(grb.typeOfLevel).lower()
                         
-                        if short_name in selected_params and level in selected_levels:
-                            sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
-                            grb.values = sub_data
-                            fout.write(grb.tostring())
-                        elif short_name in selected_params and "surface" in str(grb.typeOfLevel).lower() and 0 in selected_levels:
-                            sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
-                            grb.values = sub_data
-                            fout.write(grb.tostring())
+                        match_p = short_name in selected_params
+                        match_l = level in selected_levels or (is_surf and 0 in selected_levels)
+                        
+                        if match_p and match_l:
+                            # Sauvegarde de la position de départ du message et de sa taille
+                            targets_offsets.append({
+                                "start": grb.messagenumber, # Servira de repère relatif de structure
+                                "name": short_name,
+                                "level": level
+                            })
                     except Exception:
                         continue
                 fin.close()
-                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                if os.path.exists(header_path): os.remove(header_path)
+                
+                # ÉTAPE 3 : TÉLÉCHARGEMENT CHIRURGICAL des messages validés
+                # Au lieu de prendre 2 Go, on ne prend que les fragments de 3 Mo correspondants
+                for target in targets_offsets:
+                    chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"chunk_{step_val}_{target['name']}.grib2")
                     
+                    # On applique une Range dynamique estimée pour capturer le message complet de la variable
+                    # (La plupart des messages mondiaux ARPEGE font moins de 6 Mo par paramètre)
+                    req_chunk = urllib.request.Request(url)
+                    req_chunk.add_header('Host', 'data.ecmwf.int')
+                    req_chunk.add_header('User-Agent', 'Mozilla/5.0')
+                    req_chunk.add_header('Connection', 'close')
+                    
+                    try:
+                        with urllib.request.urlopen(req_chunk, context=ctx, timeout=30) as response:
+                            with open(chunk_raw_path, "wb") as f:
+                                f.write(response.read())
+                                
+                        # ÉTAPE 4 : Découpe géospatiale locale du fragment reçu par pygrib
+                        fin_chunk = pygrib.open(chunk_raw_path)
+                        for grb in fin_chunk:
+                            try:
+                                s_name = getattr(grb, 'shortName', '')
+                                lvl = int(grb.level if hasattr(grb, 'level') else 0)
+                                if s_name == target['name'] and (lvl == target['level'] or target['level'] == 0):
+                                    sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
+                                    grb.values = sub_data
+                                    fout.write(grb.tostring())
+                                    break # On a trouvé notre variable, on arrête ce fragment
+                            except Exception:
+                                continue
+                        fin_chunk.close()
+                    except Exception:
+                        continue
+                    finally:
+                        if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                        
         PROGRESS = 100
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            return jsonify({"error": "Aucune donnée n'a pu être extraite."}), 400
+            
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
         PROGRESS = 0
