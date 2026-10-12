@@ -19,23 +19,43 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ogimet_arpege_request(step_val, levtype="sfc"):
-    """Construit une requête HTTP sécurisée par IP directe vers Ogimet (Zéro appel DNS)"""
+def resolve_dns_google_https(domain):
+    """Interroge l'API sécurisée Google DNS en HTTPS pour bypasser le DNS cassé de Render"""
+    try:
+        ctx = ssl._create_unverified_context()
+        dns_url = f"https://dns.google{domain}&type=A"
+        req = urllib.request.Request(dns_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if "Answer" in data and len(data["Answer"]) > 0:
+                return data["Answer"][0]["data"]
+    except Exception as e:
+        print(f"⚠️ Échec Résolution Google DNS pour {domain}: {e}")
+    return None
+
+def get_arpege_request(step_val, levtype="sfc"):
+    """Construit une requête HTTP sécurisée et dynamique par injection d'IP résolue via DoH"""
     now = datetime.utcnow()
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # ADRESSE IP PHYSIQUE FIXE OFFICIELLE DE OGIMET.COM
-    ogimet_static_ip = "147.156.9.155"
+    domain = "public-api.meteofrance.fr"
+    dynamic_ip = resolve_dns_google_https(domain)
     
-    # Construction de l'URL par IP brute pour court-circuiter le DNS défaillant de Render
+    # Choix du suffixe officiel Météo-France selon la nature des données
     suffix = "pl" if levtype == "pl" else "sfc"
-    url = f"https://{ogimet_static_ip}/grib/ARPEGE_0.25_{date_str}00_{step_str}_{suffix}.grib2"
     
-    req = urllib.request.Request(url)
-    # Injection obligatoire de l'hôte pour valider la session et le certificat SSL sur IP brute
-    req.add_header('Host', 'ogimet.com')
+    if dynamic_ip:
+        # Route sécurisée sur IP dynamique valide
+        url = f"https://{dynamic_ip}/public/DPOpenData/productions/ARPEGE/025/GLOB/arpege_025_GLOB_{date_str}0000_{step_str}h_{suffix}.grib2"
+        req = urllib.request.Request(url)
+        req.add_header('Host', domain)
+    else:
+        # Repli textuel si l'API Google DNS était momentanément saturée
+        url = f"https://{domain}/public/DPOpenData/productions/ARPEGE/025/GLOB/arpege_025_GLOB_{date_str}0000_{step_str}h_{suffix}.grib2"
+        req = urllib.request.Request(url)
+        
     req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
     req.add_header('Connection', 'close')
     return req
@@ -102,7 +122,7 @@ def scan_arpege():
     return jsonify({
         "success": True,
         "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()) if x.split().isdigit() else 0)
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split()[0].isdigit() else 0)
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -127,7 +147,7 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            selected_levels.append(int(str(l).split().strip()))
+            selected_levels.append(int(str(l).split()[0].strip()))
         except:
             if "surface" in str(l):
                 selected_levels.append(0)
@@ -137,7 +157,6 @@ def fetch_and_crop():
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     if os.path.exists(output_path): os.remove(output_path)
     
-    # Désactivation de la vérification stricte du certificat pour l'IP brute
     ctx = ssl._create_unverified_context()
     
     try:
@@ -145,7 +164,7 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                req = get_ogimet_arpege_request(step_val, levtype)
+                req = get_arpege_request(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
@@ -185,7 +204,7 @@ def fetch_and_crop():
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur de traitement par IP brute : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur lors du traitement réseau : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
