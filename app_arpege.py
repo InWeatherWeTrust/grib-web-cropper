@@ -19,13 +19,16 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ecmwf_arpege_url(step_val):
-    """Calcule l'URL brute du run ARPEGE Monde 0.25° sur l'IP fixe officielle (Anti-Bug DNS)"""
+def get_ecmwf_arpege_url(step_val, levtype="sfc"):
+    """Calcule l'URL brute exacte selon le mode choisi (Surface ou Altitude hPa)"""
     yesterday = datetime.utcnow() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     ecmwf_static_ip = "136.156.129.245"
-    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-fc.grib2"
+    
+    # Sélection du suffixe officiel de l'ECMWF pour ARPEGE
+    suffix = "pl" if levtype == "pl" else "fc"
+    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -39,30 +42,30 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Garantit un scan instantané sans timeout en listant les vrais paramètres officiels d'ARPEGE Monde"""
-    # Déclaration explicite et rigoureuse du catalogue complet d'ARPEGE 0.25° de Météo-France
-    # Cela évite le freeze réseau tout en vous donnant exactement vos variables de routage
-    available_params = [
-        "10m u-component of wind (10u)",
-        "10m v-component of wind (10v)",
-        "Mean sea level pressure (msl)",
-        "2m temperature (2t)",
-        "Total precipitation (tp)",
-        "Geopotential height (gh)",
-        "Relative humidity (r)"
-    ]
+    """Charge instantanément le catalogue officiel selon le mode sélectionné"""
+    data = request.json
+    levtype = data.get("levtype", "sfc")
     
-    # Hauteurs de référence indexées par Météo-France
-    available_levels = [
-        "0 (surface)",
-        "1000 (hPa)",
-        "850 (hPa)",
-        "700 (hPa)",
-        "500 (hPa)",
-        "400 (hPa)",
-        "300 (hPa)",
-        "250 (hPa)"
-    ]
+    if levtype == "pl":
+        # Catalogue officiel ARPEGE Monde pour les niveaux de pression (Altitude)
+        available_params = [
+            "U-component of wind (u)",
+            "V-component of wind (v)",
+            "Geopotential height (gh)",
+            "Relative humidity (r)",
+            "Temperature (t)"
+        ]
+        available_levels = ["1000 hPa", "850 hPa", "700 hPa", "500 hPa", "400 hPa", "300 hPa", "250 hPa"]
+    else:
+        # Catalogue officiel ARPEGE Monde pour la surface
+        available_params = [
+            "10m u-component of wind (10u)",
+            "10m v-component of wind (10v)",
+            "Mean sea level pressure (msl)",
+            "2m temperature (2t)",
+            "Total precipitation (tp)"
+        ]
+        available_levels = ["0 (surface)"]
     
     return jsonify({
         "success": True, 
@@ -77,25 +80,18 @@ def fetch_and_crop():
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params_raw = data.get("params", [])
-    selected_levels_raw = data.get("levels", [])
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    levtype = data.get("levtype", "sfc")
+    selected_params_raw = data.get("params",)
+    selected_levels_raw = data.get("levels",)
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
-    # Isolation propre du code court (ex: "10u", "msl")
-    selected_params = []
-    for p in selected_params_raw:
-        if "(" in p:
-            selected_params.append(p.split("(")[-1].replace(")", "").strip())
-        else:
-            selected_params.append(p.strip())
-            
-    selected_levels = []
+    selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
+    
+    selected_levels =
     for l in selected_levels_raw:
         try:
-            if "(" in str(l):
-                selected_levels.append(int(str(l).split("(")[0].strip()))
-            else:
-                selected_levels.append(int(str(l).strip()))
+            # Extrait le nombre (ex: "500 hPa" -> 500)
+            selected_levels.append(int(str(l).split()[0].strip()))
         except:
             if "surface" in str(l):
                 selected_levels.append(0)
@@ -111,15 +107,15 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ecmwf_arpege_url(step_val)
+                url = get_ecmwf_arpege_url(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 req = urllib.request.Request(url)
                 req.add_header('Host', 'data.ecmwf.int')
                 req.add_header('User-Agent', 'Mozilla/5.0')
                 req.add_header('Connection', 'close')
                 
-                # Le téléchargement final s'exécute de manière séquentielle tranche par tranche
                 with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
                     with open(chunk_raw_path, "wb") as f:
                         f.write(response.read())
