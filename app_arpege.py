@@ -26,7 +26,6 @@ def get_ecmwf_arpege_url(step_val, levtype="sfc"):
     step_str = f"{step_val:03d}"
     ecmwf_static_ip = "136.156.129.245"
     
-    # Sélection du suffixe officiel de l'ECMWF pour ARPEGE
     suffix = "pl" if levtype == "pl" else "fc"
     return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
 
@@ -47,7 +46,6 @@ def scan_arpege():
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        # Catalogue officiel ARPEGE Monde pour les niveaux de pression (Altitude)
         available_params = [
             "U-component of wind (u)",
             "V-component of wind (v)",
@@ -57,7 +55,6 @@ def scan_arpege():
         ]
         available_levels = ["1000 hPa", "850 hPa", "700 hPa", "500 hPa", "400 hPa", "300 hPa", "250 hPa"]
     else:
-        # Catalogue officiel ARPEGE Monde pour la surface
         available_params = [
             "10m u-component of wind (10u)",
             "10m v-component of wind (10v)",
@@ -81,16 +78,21 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params",)
-    selected_levels_raw = data.get("levels",)
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
+    selected_params_raw = data.get("params", [])
+    selected_levels_raw = data.get("levels", [])
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
-    
-    selected_levels =
+    # Correction des listes de filtrage
+    selected_params = []
+    for p in selected_params_raw:
+        if "(" in p:
+            selected_params.append(p.split("(")[-1].replace(")", "").strip())
+        else:
+            selected_params.append(p.strip())
+            
+    selected_levels = []
     for l in selected_levels_raw:
         try:
-            # Extrait le nombre (ex: "500 hPa" -> 500)
             selected_levels.append(int(str(l).split()[0].strip()))
         except:
             if "surface" in str(l):
