@@ -102,9 +102,9 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params",)
-    selected_levels_raw = data.get("levels",)
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
+    selected_params_raw = data.get("params", [])
+    selected_levels_raw = data.get("levels", [])
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
     selected_params = []
     for p in selected_params_raw:
@@ -116,7 +116,6 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # CORRECTION CRUCIALE : Extraction robuste du premier élément textuel de la liste scindée
             parts = str(l).strip().split()
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
@@ -142,7 +141,6 @@ def fetch_and_crop():
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                # ÉTAPE 1 : Téléchargement unitaire par urllib (Négociation d'en-tête Host validée)
                 try:
                     req = urllib.request.Request(url)
                     req.add_header('Host', 'data.ecmwf.int')
@@ -156,7 +154,6 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
-                # ÉTAPE 2 : Découpe locale geospatiale par pygrib
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
