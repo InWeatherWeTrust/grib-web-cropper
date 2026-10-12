@@ -2,8 +2,10 @@ import sys
 import os
 import json
 import shutil
+import urllib.request
+import ssl
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
-from ecmwf.opendata import Client
 import pygrib
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +19,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
+def get_ecmwf_arpege_url(step_val):
+    """Calcule l'URL exacte du fichier brut ARPEGE Monde stocké à l'ECMWF"""
+    yesterday = datetime.utcnow() - timedelta(days=1)
+    date_str = yesterday.strftime("%Y%m%d")
+    
+    # Formatage de l'échéance exigé (ex: 12h, 24h)
+    return f"https://data.ecmwf.int/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_val}h-oper-fc.grib2"
+
 @app.route('/')
 @app.route('/arpege')
 def index():
@@ -29,31 +39,27 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Utilise l'API officielle pour télécharger l'échéance ARPEGE Monde et en lire l'entête réelle"""
     data = request.json
-    selected_steps = data.get("steps", [])
+    selected_steps = data.get("steps",)
     if not selected_steps:
         return jsonify({"error": "Cochez au moins une échéance."}), 400
         
     steps_ints = sorted([int(s) for s in selected_steps])
     first_step = steps_ints[0]
     
-    scan_path = os.path.join(UPLOAD_FOLDER, f"scan_arpege_{first_step}.grib2")
+    url = get_ecmwf_arpege_url(first_step)
+    scan_filename = f"scan_arp_world_{first_step}.grib2"
+    scan_path = os.path.join(UPLOAD_FOLDER, scan_filename)
+    
     if os.path.exists(scan_path): os.remove(scan_path)
     
     try:
-        # L'API bascule automatiquement sur les serveurs miroirs d'échange internationaux
-        client = Client(source="ecmwf")
-        client.retrieve(
-            date=-1,
-            time="00",
-            step=first_step,
-            stream="oper",
-            type="fc",
-            model="arpege", # <-- ICI : On ordonne explicitement à l'API de charger le modèle de Météo-France
-            levtype="sfc",
-            target=scan_path
-        )
+        ctx = ssl._create_unverified_context()
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'})
+        
+        with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
+            with open(scan_path, "wb") as f:
+                f.write(response.read())
                 
         fin = pygrib.open(scan_path)
         params_set = set()
@@ -73,12 +79,13 @@ def scan_arpege():
             except Exception:
                 continue
         fin.close()
+        
         if os.path.exists(scan_path): os.remove(scan_path)
         
         return jsonify({"success": True, "params": sorted(list(params_set)), "levels": sorted(list(levels_set))})
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès API ARPEGE : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur de lecture du GRIB ARPEGE distant : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -87,9 +94,9 @@ def fetch_and_crop():
     
     data = request.json
     bounds = data.get("bounds")
-    selected_params_raw = data.get("params", [])
-    selected_levels_raw = data.get("levels", [])
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    selected_params_raw = data.get("params",)
+    selected_levels_raw = data.get("levels",)
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
     selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
     selected_levels = [int(l.split("(")[0].strip()) for l in selected_levels_raw if "(" in l]
@@ -100,26 +107,20 @@ def fetch_and_crop():
     if os.path.exists(output_path): os.remove(output_path)
     
     try:
-        client = Client(source="ecmwf")
-        
+        ctx = ssl._create_unverified_context()
         with open(output_path, "wb") as fout:
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
+                url = get_ecmwf_arpege_url(step_val)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    client.retrieve(
-                        date=-1,
-                        time="00",
-                        step=step_val,
-                        stream="oper",
-                        type="fc",
-                        model="arpege", # <-- Téléchargement du morceau ARPEGE Monde
-                        levtype="sfc",
-                        target=chunk_raw_path
-                    )
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Connection': 'close'})
+                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
+                        with open(chunk_raw_path, "wb") as f:
+                            f.write(response.read())
                             
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
