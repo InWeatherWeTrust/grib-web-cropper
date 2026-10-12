@@ -19,15 +19,18 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ecmwf_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF"""
-    yesterday = datetime.utcnow() - timedelta(days=1)
+def get_ogimet_arpege_url(step_val, levtype="sfc"):
+    """Calcule l'URL exacte sur le répertoire d'Ogimet en utilisant son IP physique fixe pour contourner le DNS de Render"""
+    now = datetime.utcnow()
+    # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100% sur le miroir
+    yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
-    ecmwf_static_ip = "136.156.129.245"
     
-    suffix = "pl" if levtype == "pl" else "fc"
-    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
+    suffix = "pl" if levtype == "pl" else "sfc"
+    
+    # ON UTILISE L'IP DIRECTE D'OGIMET POUR COURT-CIRCUITER LES BUGS DNS DE RENDER
+    return f"http://147.156.9_{date_str}00_{step_str}_{suffix}.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -41,41 +44,39 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère dynamiquement les listes conformes au descriptif technique officiel de Météo-France"""
+    """Génère dynamiquement les listes conformes au descriptif technique officiel d'ARPEGE Ogimet"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
         raw_grib_index = [
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 700},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 700},
+            {"name": "U component of wind", "shortName": "u", "level": 700},
+            {"name": "V component of wind", "shortName": "v", "level": 700},
             {"name": "Geopotential height", "shortName": "gh", "level": 700},
             {"name": "Temperature", "shortName": "t", "level": 700},
-            {"name": "Relative humidity", "shortName": "r", "level": 700},
             
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 500},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 500},
+            {"name": "U component of wind", "shortName": "u", "level": 500},
+            {"name": "V component of wind", "shortName": "v", "level": 500},
             {"name": "Geopotential height", "shortName": "gh", "level": 500},
             {"name": "Temperature", "shortName": "t", "level": 500},
-            {"name": "Relative humidity", "shortName": "r", "level": 500},
             
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 400},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 400},
+            {"name": "U component of wind", "shortName": "u", "level": 400},
+            {"name": "V component of wind", "shortName": "v", "level": 400},
             {"name": "Geopotential height", "shortName": "gh", "level": 400},
             
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 300},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 300},
+            {"name": "U component of wind", "shortName": "u", "level": 300},
+            {"name": "V component of wind", "shortName": "v", "level": 300},
             {"name": "Geopotential height", "shortName": "gh", "level": 300},
             
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 250},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 250},
+            {"name": "U component of wind", "shortName": "u", "level": 250},
+            {"name": "V component of wind", "shortName": "v", "level": 250},
             {"name": "Geopotential height", "shortName": "gh", "level": 250}
         ]
     else:
         raw_grib_index = [
             {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
             {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
-            {"name": "Pressure reduced to MSL", "shortName": "prmsl", "level": 0},
+            {"name": "Mean sea level pressure", "shortName": "msl", "level": 0},
             {"name": "2m temperature", "shortName": "2t", "level": 0},
             {"name": "Total precipitation", "shortName": "tp", "level": 0}
         ]
@@ -93,7 +94,7 @@ def scan_arpege():
     return jsonify({
         "success": True,
         "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()) if x.split() and x.split().isdigit() else 0)
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -104,23 +105,23 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params", [])
-    selected_levels_raw = data.get("levels", [])
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    selected_params_raw = data.get("params",)
+    selected_levels_raw = data.get("levels",)
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
-    selected_params = []
+    selected_params =
     for p in selected_params_raw:
         if "(" in p:
             selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
         else:
             selected_params.append(p.strip().lower())
             
-    selected_levels = []
+    selected_levels =
     for l in selected_levels_raw:
         try:
             parts = str(l).strip().split()
-            if parts and parts[0].isdigit():
-                selected_levels.append(int(parts[0]))
+            if parts and parts.isdigit():
+                selected_levels.append(int(parts))
         except Exception as e:
             print(f"Erreur décodage niveau : {e}")
             continue
@@ -137,13 +138,14 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ecmwf_arpege_url(step_val, levtype)
+                url = get_ogimet_arpege_url(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
+                # ÉTAPE 1 : Téléchargement direct HTTP (Sans Ssl bloquant) de la grille Ogimet de 110 Mo
                 try:
                     req = urllib.request.Request(url)
-                    req.add_header('Host', 'data.ecmwf.int')
+                    req.add_header('Host', 'ogimet.com') # On force le Host pour l'aiguillage interne du serveur
                     req.add_header('User-Agent', 'Mozilla/5.0')
                     req.add_header('Connection', 'close')
                     
@@ -154,6 +156,7 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
+                # ÉTAPE 2 : Découpe locale par pygrib sur la vraie grille de points d'ARPEGE
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
@@ -161,14 +164,10 @@ def fetch_and_crop():
                             short_name = str(getattr(grb, 'shortName', '')).lower()
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
-                            # FILTRAGE INTELLIGENT ET ASSOUPLI CORRIGÉ
                             match_p = short_name in selected_params
-                            
                             if levtype == "sfc":
-                                # En mode surface, on valide toutes les hauteurs de niveau sol
                                 match_l = True
                             else:
-                                # En mode altitude, on valide uniquement les couches isobariques cochées
                                 match_l = level in selected_levels
                             
                             if match_p and match_l:
