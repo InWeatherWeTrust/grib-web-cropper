@@ -91,7 +91,7 @@ def scan_arpege():
     return jsonify({
         "success": True,
         "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()) if x.split().isdigit() else 0)
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split()[0].isdigit() else 0)
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -102,21 +102,23 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params",)
-    selected_levels_raw = data.get("levels",)
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
+    selected_params_raw = data.get("params", [])
+    selected_levels_raw = data.get("levels", [])
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    selected_params =
+    # Correction et nettoyage des listes d'extraction
+    selected_params = []
     for p in selected_params_raw:
         if "(" in p:
             selected_params.append(p.split("(")[-1].replace(")", "").strip())
         else:
             selected_params.append(p.strip())
             
-    selected_levels =
+    selected_levels = []
     for l in selected_levels_raw:
         try:
-            selected_levels.append(int(str(l).split().strip()))
+            # Extrait uniquement la partie numérique (ex: "500 hPa" -> 500)
+            selected_levels.append(int(str(l).split()[0].strip()))
         except:
             if "surface" in str(l):
                 selected_levels.append(0)
@@ -135,12 +137,11 @@ def fetch_and_crop():
                 
                 url = get_ecmwf_arpege_url(step_val, levtype)
                 
-                # ÉTAPE 1 : Indexation à distance via requêtes partielles d'en-tête (Seulement les 20 premiers Mo)
-                # Cela évite le téléchargement des 2,5 Go et supprime 100% des erreurs de timeout
+                # ÉTAPE 1 : Indexation à distance via requêtes partielles (20 Mo)
                 header_path = os.path.join(UPLOAD_FOLDER, f"idx_{step_val}.grib2")
                 req_idx = urllib.request.Request(url)
                 req_idx.add_header('Host', 'data.ecmwf.int')
-                req_idx.add_header('Range', 'bytes=0-20971520') # On télécharge 20 Mo d'index
+                req_idx.add_header('Range', 'bytes=0-20971520')
                 req_idx.add_header('Connection', 'close')
                 
                 try:
@@ -151,7 +152,7 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                 
-                # ÉTAPE 2 : Analyse de la structure locale par pygrib pour isoler les messages cochés
+                # ÉTAPE 2 : Analyse de la structure par pygrib
                 if os.path.exists(header_path) and os.path.getsize(header_path) > 0:
                     fin = pygrib.open(header_path)
                     for grb in fin:
@@ -163,11 +164,9 @@ def fetch_and_crop():
                             match_p = short_name in selected_params
                             match_l = level in selected_levels or (is_surf and 0 in selected_levels)
                             
-                            # Si le message binaire correspond aux cases cochées, on le découpe géographiquement
                             if match_p and match_l:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
-                                # On l'écrit immédiatement dans le vrai fichier GRIB final chiffré
                                 fout.write(grb.tostring())
                         except Exception:
                             continue
