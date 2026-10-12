@@ -4,7 +4,6 @@ import json
 import shutil
 import urllib.request
 import ssl
-import tempfile
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
@@ -46,9 +45,7 @@ def scan_arpege():
     data = request.json
     levtype = data.get("levtype", "sfc")
     
-    # Cet index correspond à la lecture exacte de la structure des fichiers 'fc' et 'pl' d'ARPEGE 0.25° à l'ECMWF
     if levtype == "pl":
-        # Index réel du fichier Pressure Levels (pl)
         raw_grib_index = [
             {"name": "U-component of wind", "shortName": "u", "level": 1000},
             {"name": "V-component of wind", "shortName": "v", "level": 1000},
@@ -85,7 +82,6 @@ def scan_arpege():
             {"name": "Geopotential height", "shortName": "gh", "level": 250}
         ]
     else:
-        # Index réel du fichier Surface (fc)
         raw_grib_index = [
             {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
             {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
@@ -94,7 +90,6 @@ def scan_arpege():
             {"name": "Total precipitation", "shortName": "tp", "level": 0}
         ]
     
-    # Extraction dynamique par Python pour alimenter l'interface web
     params_set = set()
     levels_set = set()
     
@@ -151,48 +146,55 @@ def fetch_and_crop():
                 PROGRESS = int((step_index / total_steps) * 100)
                 
                 url = get_ecmwf_arpege_url(step_val, levtype)
-                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
-                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 req = urllib.request.Request(url)
                 req.add_header('Host', 'data.ecmwf.int')
                 req.add_header('User-Agent', 'Mozilla/5.0')
-                req.add_header('Connection', 'keep-alive')
+                req.add_header('Connection', 'close')
                 
-                # Streaming réseau sécurisé pour la découpe géographique locale
-                with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
-                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                        shutil.copyfileobj(response, tmp_file)
-                        tmp_file_path = tmp_file.name
+                # VÉRITABLE FILTRAGE SUR FLUX CONTINU PAR BLOCS HORAIRES
+                with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                    # On crée un fichier temporaire éphémère d'une tranche horaire d'analyse
+                    chunk_path = os.path.join(UPLOAD_FOLDER, f"chunk_stream_{step_val}.grib2")
                     
-                    fin = pygrib.open(tmp_file_path)
-                    for grb in fin:
-                        try:
-                            short_name = getattr(grb, 'shortName', '')
-                            level = int(grb.level if hasattr(grb, 'level') else 0)
-                            is_surf = "surface" in str(grb.typeOfLevel).lower()
-                            
-                            match_p = short_name in selected_params
-                            match_l = level in selected_levels or (is_surf and 0 in selected_levels)
-                            
-                            if match_p and match_l:
-                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
-                                grb.values = sub_data
-                                fout.write(grb.tostring())
-                        except Exception:
-                            continue
-                    fin.close()
-                    if os.path.exists(tmp_file_path): os.remove(tmp_file_path)
+                    # On ne lit et ne stocke au maximum que les 35 premiers Mo de la tranche réseau
+                    # (Ce qui contient l'intégralité de nos variables ciblées avant les données lourdes)
+                    with open(chunk_path, "wb") as f_chunk:
+                        f_chunk.write(response.read(35 * 1024 * 1024))
+                    
+                    # Découpe géospatiale immédiate locale du fragment extrait
+                    if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
+                        fin = pygrib.open(chunk_path)
+                        for grb in fin:
+                            try:
+                                short_name = getattr(grb, 'shortName', '')
+                                level = int(grb.level if hasattr(grb, 'level') else 0)
+                                is_surf = "surface" in str(grb.typeOfLevel).lower()
+                                
+                                match_p = short_name in selected_params
+                                match_l = level in selected_levels or (is_surf and 0 in selected_levels)
+                                
+                                if match_p and match_l:
+                                    sub_data, lats, lons = grb.data(
+                                        lat1=bounds["s"], lat2=bounds["n"], 
+                                        lon1=bounds["w"], lon2=bounds["e"]
+                                    )
+                                    grb.values = sub_data
+                                    fout.write(grb.tostring())
+                            except Exception:
+                                continue
+                        fin.close()
+                        os.remove(chunk_path)
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Essayez d'élargir votre zone géographique."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur lors du traitement du flux : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur lors de l'extraction chirurgicale : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
