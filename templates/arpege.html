@@ -235,14 +235,20 @@
             fetch('/arpege/api/fetch_and_crop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps, levtype: mode }) // Envoi au fetch
+                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps, levtype: mode })
             })
             .then(res => res.json()).then(data => {
                 clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
-                if (data.success) { window.location.href = "/arpege" + data.download_url; } else { alert("❌ " + data.error); }
+                if (data.success) { 
+                    // CORRECTION ICI : data.download_url contient déjà "/arpege/api/download/..."
+                    window.location.href = data.download_url; 
+                } else { 
+                    alert("❌ " + data.error); 
+                }
             });
         };
     </script>
 </body>
 </html>
+
 
