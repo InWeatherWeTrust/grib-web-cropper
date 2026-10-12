@@ -19,25 +19,36 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ecmwf_arpege_url(step_val):
-    """Calcule l'URL exacte du run 00Z le plus récent sur les serveurs de stockage ECMWF"""
+def check_url_exists(url):
+    """Vérifie si une URL par IP répond présente (HEAD request)"""
     ctx = ssl._create_unverified_context()
-    step_str = f"{step_val:03d}"
-    
-    # 1. Tentative sur le run de 00Z d'AUJOURD'HUI (URL structurelle corrigée)
-    today_str = datetime.utcnow().strftime("%Y%m%d")
-    url_today = f"https://ecmwf.int{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_str}h-oper-fc.grib2"
-    
     try:
-        req = urllib.request.Request(url_today, method='HEAD', headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, method='HEAD')
+        req.add_header('Host', 'data.ecmwf.int')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        req.add_header('Connection', 'close')
         with urllib.request.urlopen(req, context=ctx, timeout=4):
-            print(f"🎯 Run ARPEGE 00Z d'aujourd'hui trouvé ({today_str})")
-            return url_today
+            return True
     except Exception:
-        # 2. Repli sur le run de 00Z d'HIER si celui d'aujourd'hui n'est pas encore en ligne
-        yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
-        print(f"⚠️ Run d'aujourd'hui indisponible, repli sur le 00Z d'hier ({yesterday_str})")
-        return f"https://ecmwf.int{yesterday_str}/00z/arpege/0p25/oper/{yesterday_str}0000-{step_str}h-oper-fc.grib2"
+        return False
+
+def get_ecmwf_arpege_url(step_val):
+    """Calcule l'URL par IP directe du run 00Z d'aujourd'hui ou d'hier (Zéro DNS)"""
+    step_str = f"{step_val:03d}"
+    ecmwf_static_ip = "136.156.129.245"
+    
+    # 1. Tentative sur le run de 00Z d'AUJOURD'HUI
+    today_str = datetime.utcnow().strftime("%Y%m%d")
+    url_today = f"https://{ecmwf_static_ip}/forecasts/{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_str}h-oper-fc.grib2"
+    
+    if check_url_exists(url_today):
+        print(f"🎯 Run ARPEGE 00Z d'aujourd'hui trouvé ({today_str})")
+        return url_today
+        
+    # 2. Repli sur le run de 00Z d'HIER
+    yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
+    print(f"⚠️ Run d'aujourd'hui indisponible, repli sur le 00Z d'hier ({yesterday_str})")
+    return f"https://{ecmwf_static_ip}/forecasts/{yesterday_str}/00z/arpege/0p25/oper/{yesterday_str}0000-{step_str}h-oper-fc.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -67,7 +78,10 @@ def scan_arpege():
     
     try:
         ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
+        req = urllib.request.Request(url)
+        req.add_header('Host', 'data.ecmwf.int')
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+        req.add_header('Connection', 'close')
         
         with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
             with open(scan_path, "wb") as f:
@@ -87,7 +101,7 @@ def scan_arpege():
                 if short_name:
                     params_set.add(f"{name} ({short_name})")
                 if level is not None:
-                    levels_set.add(int(level))
+                    levels_set.add(f"{level} ({lev_type})")
             except Exception:
                 continue
         fin.close()
@@ -97,7 +111,7 @@ def scan_arpege():
         return jsonify({"success": True, "params": sorted(list(params_set)), "levels": sorted(list(levels_set))})
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur de lecture du GRIB ARPEGE distant : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur de lecture par IP directe ARPEGE : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -111,7 +125,12 @@ def fetch_and_crop():
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
     selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
-    selected_levels = [int(l.split("(")[0].strip()) for l in selected_levels_raw if "(" in l] or [int(l) for l in selected_levels_raw if l.isdigit()]
+    selected_levels = []
+    for l in selected_levels_raw:
+        if "(" in str(l):
+            selected_levels.append(int(str(l).split("(")[0].strip()))
+        else:
+            selected_levels.append(int(l))
     
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
@@ -129,7 +148,11 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
+                    req = urllib.request.Request(url)
+                    req.add_header('Host', 'data.ecmwf.int')
+                    req.add_header('User-Agent', 'Mozilla/5.0')
+                    req.add_header('Connection', 'close')
+                    
                     with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
