@@ -20,7 +20,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ecmwf_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF (Zéro panne DNS)"""
+    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF"""
     yesterday = datetime.utcnow() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
@@ -47,26 +47,26 @@ def scan_arpege():
     
     if levtype == "pl":
         raw_grib_index = [
-            {"name": "U-component of wind", "shortName": "u", "level": 700},
-            {"name": "V-component of wind", "shortName": "v", "level": 700},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 700},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 700},
             {"name": "Geopotential height", "shortName": "gh", "level": 700},
             {"name": "Temperature", "shortName": "t", "level": 700},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 500},
-            {"name": "V-component of wind", "shortName": "v", "level": 500},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 500},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 500},
             {"name": "Geopotential height", "shortName": "gh", "level": 500},
             {"name": "Temperature", "shortName": "t", "level": 500},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 400},
-            {"name": "V-component of wind", "shortName": "v", "level": 400},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 400},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 400},
             {"name": "Geopotential height", "shortName": "gh", "level": 400},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 300},
-            {"name": "V-component of wind", "shortName": "v", "level": 300},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 300},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 300},
             {"name": "Geopotential height", "shortName": "gh", "level": 300},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 250},
-            {"name": "V-component of wind", "shortName": "v", "level": 250},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 250},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 250},
             {"name": "Geopotential height", "shortName": "gh", "level": 250}
         ]
     else:
@@ -116,7 +116,6 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # CORRECTION CRUCIALE : Isolement précis du premier mot pour conversion numérique
             parts = str(l).strip().split()
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
@@ -162,7 +161,11 @@ def fetch_and_crop():
                             short_name = getattr(grb, 'shortName', '')
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
+                            # Tolérance de sécurité pour capter à la fois les codes u/v et ucomp/vcomp
                             match_p = short_name in selected_params
+                            if not match_p and short_name == 'u' and 'ucomp' in selected_params: match_p = True
+                            if not match_p and short_name == 'v' and 'vcomp' in selected_params: match_p = True
+                            
                             match_l = level in selected_levels
                             
                             if match_p and match_l:
