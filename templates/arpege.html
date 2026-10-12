@@ -28,15 +28,21 @@
 
     <div id="sidebar">
         <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px; color: #f43f5e;">⚡ ARPEGE Monde 0.25°</h2>
-        <div id="status" style="color: #94a3b8; font-size: 11px; margin-bottom: 5px;">Sélectionnez vos échéances puis lancez l'analyse Météo-France.</div>
+        <div id="status" style="color: #94a3b8; font-size: 11px; margin-bottom: 5px;">Configurez votre mode puis lancez le scan.</div>
         
-        <!-- NOUVELLE GRILLE CALIBRÉE EN PAS DE 12H JUSQU'À 72H MAX -->
-        <h3>⏱️ 1. Échéances ARPEGE (Pas de 12h) :</h3>
+        <!-- NOUVEAU SÉLECTEUR DE MODE INTERFACE ARPEGE -->
+        <h3>⚙️ Type de Données ARPEGE :</h3>
+        <select id="mode-select" style="border: 1px solid #f43f5e; font-weight: bold; color: #fb7185;">
+            <option value="sfc" selected>🌍 MODE SURFACE (Vent 10m, Pression...)</option>
+            <option value="pl">🌬️ MODE ALTITUDE (Vents hPa, Courant-jet...)</option>
+        </select>
+
+        <h3>⏱️ 1. Échéances ARPEGE :</h3>
         <div class="step-grid" id="step-container">
-            <label class="step-item"><input type="checkbox" value="12" checked> +12h (Jour 1)</label>
-            <label class="step-item"><input type="checkbox" value="24" checked> +24h (Jour 1)</label>
-            <label class="step-item"><input type="checkbox" value="48"> +48h (Jour 2)</label>
-            <label class="step-item"><input type="checkbox" value="72"> +72h (Jour 3 max)</label>
+            <label class="step-item"><input type="checkbox" value="12" checked> +12h</label>
+            <label class="step-item"><input type="checkbox" value="24" checked> +24h</label>
+            <label class="step-item"><input type="checkbox" value="48"> +48h</label>
+            <label class="step-item"><input type="checkbox" value="72"> +72h</label>
         </div>
         <button id="btn-scan" style="margin-top: 5px; background: #f59e0b; color: #000; font-weight: bold;">🔍 Scan de l'entête Météo-France</button>
 
@@ -171,9 +177,11 @@
             isDrawing = true; drawSelectionBox(); isDrawing = false; checkReady();
         };
 
-        document.getElementById('btn-scan').onclick = function() {
+                document.getElementById('btn-scan').onclick = function() {
             const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
             const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
+            const mode = document.getElementById('mode-select').value; // Récupère sfc ou pl
+            
             if(selectedSteps.length === 0) { alert("⚠️ Cochez au moins une échéance."); return; }
             
             document.getElementById('status').innerText = "⏳ Scan ARPEGE Monde en cours...";
@@ -182,7 +190,7 @@
             fetch('/arpege/api/scan_arpege', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ steps: selectedSteps })
+                body: JSON.stringify({ steps: selectedSteps, levtype: mode }) // Envoi du mode choisi
             })
             .then(res => res.json()).then(data => {
                 document.getElementById('btn-scan').disabled = false;
@@ -212,6 +220,7 @@
             const selectedLevels = Array.from(document.getElementById('level-list').selectedOptions).map(opt => opt.value);
             const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
             const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
+            const mode = document.getElementById('mode-select').value; // Récupère sfc ou pl
 
             document.getElementById('progress-container').style.display = 'flex';
             document.getElementById('btn-crop').disabled = true;
@@ -226,13 +235,14 @@
             fetch('/arpege/api/fetch_and_crop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps })
+                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps, levtype: mode }) // Envoi au fetch
             })
             .then(res => res.json()).then(data => {
                 clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
-                if (data.success) { window.location.href = data.download_url; } else { alert("❌ " + data.error); }
+                if (data.success) { window.location.href = "/arpege" + data.download_url; } else { alert("❌ " + data.error); }
             });
         };
     </script>
 </body>
 </html>
+
