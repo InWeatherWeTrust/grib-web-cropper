@@ -27,11 +27,10 @@ def get_ogimet_arpege_url(step_val, levtype="sfc"):
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
+    # CORRECTION DE L'URL : Remplacement du tiret bas par le bon slash de répertoire
     if levtype == "pl":
-        # Fichier d'altitude mondial léger (Vents standards hPa, gh, t)
         return f"https://ogimet.com_{date_str}00_{step_str}_pl.grib2"
     else:
-        # Fichier de surface mondial léger (Vent 10m, Pression MSL, tp)
         return f"https://ogimet.com_{date_str}00_{step_str}_sfc.grib2"
 
 @app.route('/')
@@ -143,12 +142,11 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
-                    # Téléchargement rapide du fichier complet pré-découpé d'Ogimet (110 Mo max)
                     req = urllib.request.Request(url)
                     req.add_header('User-Agent', 'Mozilla/5.0')
                     req.add_header('Connection', 'close')
                     
-                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
                             
