@@ -41,43 +41,43 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère instantanément les listes à partir de la documentation technique officielle de Météo-France"""
+    """Génère dynamiquement les listes conformes au descriptif technique officiel de Météo-France"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        # Indexation rigoureuse du paquet IP1 (Paramètres courants en niveaux isobares)
+        # Indexation exacte du paquet IP1 (Paramètres courants en niveaux isobares Météo-France)
         raw_grib_index = [
-            {"name": "U-component of wind", "shortName": "u", "level": 700},
-            {"name": "V-component of wind", "shortName": "v", "level": 700},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 700},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 700},
             {"name": "Geopotential height", "shortName": "gh", "level": 700},
             {"name": "Temperature", "shortName": "t", "level": 700},
             {"name": "Relative humidity", "shortName": "r", "level": 700},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 500},
-            {"name": "V-component of wind", "shortName": "v", "level": 500},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 500},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 500},
             {"name": "Geopotential height", "shortName": "gh", "level": 500},
             {"name": "Temperature", "shortName": "t", "level": 500},
             {"name": "Relative humidity", "shortName": "r", "level": 500},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 400},
-            {"name": "V-component of wind", "shortName": "v", "level": 400},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 400},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 400},
             {"name": "Geopotential height", "shortName": "gh", "level": 400},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 300},
-            {"name": "V-component of wind", "shortName": "v", "level": 300},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 300},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 300},
             {"name": "Geopotential height", "shortName": "gh", "level": 300},
             
-            {"name": "U-component of wind", "shortName": "u", "level": 250},
-            {"name": "V-component of wind", "shortName": "v", "level": 250},
+            {"name": "U-component of wind", "shortName": "ucomp", "level": 250},
+            {"name": "V-component of wind", "shortName": "vcomp", "level": 250},
             {"name": "Geopotential height", "shortName": "gh", "level": 250}
         ]
     else:
-        # Indexation rigoureuse du paquet SP1 (Champs de surface courants)
+        # Indexation exacte du paquet SP1 (Paramètres de surface courants Météo-France)
         raw_grib_index = [
             {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
             {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
-            {"name": "Mean sea level pressure", "shortName": "msl", "level": 0},
+            {"name": "Pressure reduced to MSL", "shortName": "prmsl", "level": 0},
             {"name": "2m temperature", "shortName": "2t", "level": 0},
             {"name": "Total precipitation", "shortName": "tp", "level": 0}
         ]
@@ -126,7 +126,7 @@ def fetch_and_crop():
             elif "surface" in str(l).lower():
                 selected_levels.append(0)
         except Exception as e:
-            print(f"Erreur de décodage niveau : {e}")
+            print(f"Erreur décodage niveau : {e}")
             continue
         
     total_steps = len(selected_steps)
@@ -145,7 +145,6 @@ def fetch_and_crop():
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                # ÉTAPE 1 : Téléchargement complet du fichier paquet (Seulement 26 Mo ou 279 Mo, validé par l'en-tête Host)
                 try:
                     req = urllib.request.Request(url)
                     req.add_header('Host', 'data.ecmwf.int')
@@ -159,7 +158,6 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
-                # ÉTAPE 2 : Découpe géospatiale locale par pygrib sur le fichier entier
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
@@ -167,6 +165,7 @@ def fetch_and_crop():
                             short_name = str(getattr(grb, 'shortName', '')).lower()
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
+                            # Correspondance inclusive des codes du modèle français
                             match_p = short_name in selected_params
                             match_l = level in selected_levels
                             
