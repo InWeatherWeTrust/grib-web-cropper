@@ -102,11 +102,10 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params", [])
-    selected_levels_raw = data.get("levels", [])
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    selected_params_raw = data.get("params",)
+    selected_levels_raw = data.get("levels",)
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
-    # Correction et nettoyage des listes d'extraction
     selected_params = []
     for p in selected_params_raw:
         if "(" in p:
@@ -117,11 +116,15 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # Extrait uniquement la partie numérique (ex: "500 hPa" -> 500)
-            selected_levels.append(int(str(l).split()[0].strip()))
-        except:
-            if "surface" in str(l):
+            # Extraction chirurgicale stricte du premier bloc de texte (ex: "500 hPa" -> "500" -> 500)
+            parts = str(l).strip().split()
+            if parts and parts[0].isdigit():
+                selected_levels.append(int(parts[0]))
+            elif "surface" in str(l).lower():
                 selected_levels.append(0)
+        except Exception as e:
+            print(f"Erreur de conversion du niveau {l}: {e}")
+            continue
         
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
@@ -152,7 +155,7 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                 
-                # ÉTAPE 2 : Analyse de la structure par pygrib
+                # ÉTAPE 2 : Analyse de la structure locale par pygrib
                 if os.path.exists(header_path) and os.path.getsize(header_path) > 0:
                     fin = pygrib.open(header_path)
                     for grb in fin:
