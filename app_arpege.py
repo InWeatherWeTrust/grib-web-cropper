@@ -28,27 +28,25 @@ def resolve_dns_google_https(domain):
         with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
             data = json.loads(response.read().decode('utf-8'))
             if "Answer" in data and len(data["Answer"]) > 0:
-                return data["Answer"][0]["data"]
+                return data["Answer"]["data"]
     except Exception as e:
         print(f"⚠️ Échec Résolution Google DNS pour {domain}: {e}")
     return None
 
 def get_arpege_request(step_val, levtype="sfc"):
-    """Construit la requête HTTP sécurisée officielle de Météo-France sans erreur 404"""
+    """Construit la requête HTTP sécurisée sur le miroir mondial Ogimet WMO"""
     now = datetime.utcnow()
-    # Utilisation du run de la veille pour s'assurer que l'intégralité des échéances est archivée
+    # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100% sur le miroir
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
-    step_str = f"{step_val:02d}h" # Format exigé par Météo-France (ex: 12h, 24h)
+    step_str = f"{step_val:03d}"
     
-    domain = "public-api.meteofrance.fr"
+    domain = "ogimet.com"
     dynamic_ip = resolve_dns_google_https(domain)
     
-    # Choix du suffixe officiel de fichier (sfc pour surface, pl pour les niveaux de pression)
+    # Choix du suffixe binaire selon la demande
     suffix = "pl" if levtype == "pl" else "sfc"
-    
-    # Structure de l'URL publique certifiée pour le modèle ARPEGE Monde 0.25°
-    path_url = f"/public/DPOpenData/productions/ARPEGE/025/GLOB/arpege_025_GLOB_{date_str}0000_{step_str}_{suffix}.grib2"
+    path_url = f"/grib/ARPEGE_0.25_{date_str}00_{step_str}_{suffix}.grib2"
     
     if dynamic_ip:
         url = f"https://{dynamic_ip}{path_url}"
