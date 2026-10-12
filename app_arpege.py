@@ -6,7 +6,6 @@ import urllib.request
 import ssl
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
-import pygrib
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 template_dir = os.path.join(base_dir, 'templates')
@@ -20,7 +19,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def resolve_dns_google_https(domain):
-    """Interroge l'API sécurisée Google DNS en HTTPS pour bypasser le DNS cassé de Render"""
+    """Bypasse le DNS défaillant de Render en résolvant l'IP de Météo-France via Google HTTPS"""
     try:
         ctx = ssl._create_unverified_context()
         dns_url = f"https://dns.google{domain}&type=A"
@@ -32,33 +31,6 @@ def resolve_dns_google_https(domain):
     except Exception as e:
         print(f"⚠️ Échec Résolution Google DNS pour {domain}: {e}")
     return None
-
-def get_arpege_request(step_val, levtype="sfc"):
-    """Construit la requête HTTP sécurisée sur le miroir mondial Ogimet WMO"""
-    now = datetime.utcnow()
-    # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100% sur le miroir
-    yesterday = now - timedelta(days=1)
-    date_str = yesterday.strftime("%Y%m%d")
-    step_str = f"{step_val:03d}"
-    
-    domain = "ogimet.com"
-    dynamic_ip = resolve_dns_google_https(domain)
-    
-    # Choix du suffixe binaire selon la demande
-    suffix = "pl" if levtype == "pl" else "sfc"
-    path_url = f"/grib/ARPEGE_0.25_{date_str}00_{step_str}_{suffix}.grib2"
-    
-    if dynamic_ip:
-        url = f"https://{dynamic_ip}{path_url}"
-        req = urllib.request.Request(url)
-        req.add_header('Host', domain)
-    else:
-        url = f"https://{domain}{path_url}"
-        req = urllib.request.Request(url)
-        
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    req.add_header('Connection', 'close')
-    return req
 
 @app.route('/')
 @app.route('/arpege')
@@ -72,57 +44,33 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère dynamiquement les listes en lisant l'index structurel complet ARPEGE Monde"""
+    """Génère instantanément les listes de paramètres réels selon le mode sélectionné"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        raw_grib_index = [
-            {"name": "U-component of wind", "shortName": "u", "level": 700},
-            {"name": "V-component of wind", "shortName": "v", "level": 700},
-            {"name": "Geopotential height", "shortName": "gh", "level": 700},
-            {"name": "Temperature", "shortName": "t", "level": 700},
-            
-            {"name": "U-component of wind", "shortName": "u", "level": 500},
-            {"name": "V-component of wind", "shortName": "v", "level": 500},
-            {"name": "Geopotential height", "shortName": "gh", "level": 500},
-            {"name": "Temperature", "shortName": "t", "level": 500},
-            
-            {"name": "U-component of wind", "shortName": "u", "level": 400},
-            {"name": "V-component of wind", "shortName": "v", "level": 400},
-            {"name": "Geopotential height", "shortName": "gh", "level": 400},
-            
-            {"name": "U-component of wind", "shortName": "u", "level": 300},
-            {"name": "V-component of wind", "shortName": "v", "level": 300},
-            {"name": "Geopotential height", "shortName": "gh", "level": 300},
-            
-            {"name": "U-component of wind", "shortName": "u", "level": 250},
-            {"name": "V-component of wind", "shortName": "v", "level": 250},
-            {"name": "Geopotential height", "shortName": "gh", "level": 250}
+        # Liste complète de vos altitudes de routage validées
+        available_params = [
+            "U-component of wind (u)",
+            "V-component of wind (v)",
+            "Geopotential height (gh)",
+            "Temperature (t)"
         ]
+        available_levels = ["700 hPa", "500 hPa", "400 hPa", "300 hPa", "250 hPa"]
     else:
-        raw_grib_index = [
-            {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
-            {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
-            {"name": "Mean sea level pressure", "shortName": "msl", "level": 0},
-            {"name": "2m temperature", "shortName": "2t", "level": 0},
-            {"name": "Total precipitation", "shortName": "tp", "level": 0}
+        available_params = [
+            "10m u-component of wind (10u)",
+            "10m v-component of wind (10v)",
+            "Mean sea level pressure (msl)",
+            "2m temperature (2t)",
+            "Total precipitation (tp)"
         ]
+        available_levels = ["0 (surface)"]
     
-    params_set = set()
-    levels_set = set()
-    
-    for item in raw_grib_index:
-        params_set.add(f"{item['name']} ({item['shortName']})")
-        if item['level'] == 0:
-            levels_set.add("0 (surface)")
-        else:
-            levels_set.add(f"{item['level']} hPa")
-            
     return jsonify({
         "success": True,
-        "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split()[0].isdigit() else 0)
+        "params": sorted(available_params),
+        "levels": available_levels
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -137,26 +85,21 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels",)
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
-    selected_params = []
-    for p in selected_params_raw:
-        if "(" in p:
-            selected_params.append(p.split("(")[-1].replace(")", "").strip())
-        else:
-            selected_params.append(p.strip())
-            
-    selected_levels = []
-    for l in selected_levels_raw:
-        try:
-            selected_levels.append(int(str(l).split()[0].strip()))
-        except:
-            if "surface" in str(l):
-                selected_levels.append(0)
-        
-    total_steps = len(selected_steps)
+    # Nettoyage des chaînes courtes (ex: '10u', 'u', 'msl')
+    selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
+    selected_levels = [int(l.split()[0]) for l in selected_levels_raw if l.split()[0].isdigit()]
+    
+    yesterday = datetime.utcnow() - timedelta(days=1)
+    date_str = yesterday.strftime("%Y-%m-%d")
+    
     output_filename = "crop_arpege_world.grib2"
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     if os.path.exists(output_path): os.remove(output_path)
     
+    domain = "public-api.meteofrance.fr"
+    dynamic_ip = resolve_dns_google_https(domain)
+    
+    total_steps = len(selected_steps)
     ctx = ssl._create_unverified_context()
     
     try:
@@ -164,47 +107,66 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                req = get_arpege_request(step_val, levtype)
-                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
-                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                # Formatage temporel ISO exigé par Météo-France
+                time_coverage = f"{date_str}T00:00:00Z/PT{step_val}H"
                 
-                try:
-                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
-                        with open(chunk_raw_path, "wb") as f:
-                            f.write(response.read())
-                            
-                    if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
+                for param in selected_params:
+                    # Cartographie des variables d'altitude et de surface vers l'API Météo-France
+                    if param == '10u' or param == 'u':
+                        coverage_id = 'U_COMPONENT_OF_WIND__SPECIFIC_HEIGHT_LEVEL_ABOVE_GROUND' if levtype == 'sfc' else 'U_COMPONENT_OF_WIND__ISOBARIC_SURFACE'
+                    elif param == '10v' or param == 'v':
+                        coverage_id = 'V_COMPONENT_OF_WIND__SPECIFIC_HEIGHT_LEVEL_ABOVE_GROUND' if levtype == 'sfc' else 'V_COMPONENT_OF_WIND__ISOBARIC_SURFACE'
+                    elif param == 'msl':
+                        coverage_id = 'PRESSURE__SEA_LEVEL'
+                    elif param == '2t' or param == 't':
+                        coverage_id = 'TEMPERATURE__SPECIFIC_HEIGHT_LEVEL_ABOVE_GROUND' if levtype == 'sfc' else 'TEMPERATURE__ISOBARIC_SURFACE'
+                    elif param == 'gh':
+                        coverage_id = 'GEOPOTENTIAL__ISOBARIC_SURFACE'
+                    elif param == 'tp':
+                        coverage_id = 'TOTAL_PRECIPITATION__SURFACE'
+                    else:
                         continue
                         
-                    fin = pygrib.open(chunk_raw_path)
-                    for grb in fin:
-                        try:
-                            short_name = getattr(grb, 'shortName', '')
-                            level = int(grb.level if hasattr(grb, 'level') else 0)
-                            is_surf = "surface" in str(grb.typeOfLevel).lower()
-                            
-                            match_p = short_name in selected_params
-                            match_l = level in selected_levels or (is_surf and 0 in selected_levels)
-                            
-                            if match_p and match_l:
-                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
-                                grb.values = sub_data
-                                fout.write(grb.tostring())
-                        except Exception:
-                            continue
-                    fin.close()
-                finally:
-                    if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                    # Construction des arguments de découpe par l'API WCS de Météo-France
+                    query_string = (
+                        f"/public/DPOpenData/wcs/v1/ARPEGE/025/GLOB?"
+                        f"SERVICE=WCS&VERSION=2.0.1&REQUEST=GetCoverage&COVERAGE_ID={coverage_id}&"
+                        f"SUBSET=long({bounds['w']},{bounds['e']})&SUBSET=lat({bounds['s']},{bounds['n']})&"
+                        f"TIME={time_coverage}&FORMAT=GRIB2"
+                    )
                     
+                    # On y injecte le niveau d'altitude isobarique hPa si nous sommes en mode PL
+                    if levtype == "pl":
+                        for lvl in selected_levels:
+                            url = f"https://{dynamic_ip if dynamic_ip else domain}{query_string}&SUBSET=std_level({lvl})"
+                            req = urllib.request.Request(url)
+                            if dynamic_ip: req.add_header('Host', domain)
+                            req.add_header('User-Agent', 'Mozilla/5.0')
+                            req.add_header('Connection', 'close')
+                            try:
+                                with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
+                                    fout.write(response.read())
+                            except: continue
+                    else:
+                        url = f"https://{dynamic_ip if dynamic_ip else domain}{query_string}"
+                        req = urllib.request.Request(url)
+                        if dynamic_ip: req.add_header('Host', domain)
+                        req.add_header('User-Agent', 'Mozilla/5.0')
+                        req.add_header('Connection', 'close')
+                        try:
+                            with urllib.request.urlopen(req, context=ctx, timeout=20) as response:
+                                fout.write(response.read())
+                        except: continue
+                        
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez votre zone ou vos critères."}), 400
+            return jsonify({"error": "Météo-France n'a retourné aucun message GRIB pour cette zone ou cette date."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur lors du traitement réseau : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur d'extraction WCS : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
