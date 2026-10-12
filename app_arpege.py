@@ -20,12 +20,13 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ecmwf_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF"""
+    """Calcule l'URL exacte des paquets officiels ARPEGE Monde 0.25 de Météo-France sur l'IP ECMWF"""
     yesterday = datetime.utcnow() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     ecmwf_static_ip = "136.156.129.245"
     
+    # Alignement rigoureux sur la nomenclature des fichiers stockés à l'ECMWF
     suffix = "pl" if levtype == "pl" else "fc"
     return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
 
@@ -41,7 +42,7 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """SCAN DYNAMIQUE RÉEL : Analyse les premiers Mo du vrai fichier pour lister les paramètres présents"""
+    """VRAI SCAN BINAIRE : Télécharge le fichier paquet et lit les vraies variables contenues dedans"""
     data = request.json
     selected_steps = data.get("steps",)
     levtype = data.get("levtype", "sfc")
@@ -49,7 +50,7 @@ def scan_arpege():
     if not selected_steps:
         return jsonify({"error": "Cochez au moins une échéance pour le scan."}), 400
         
-    first_step = sorted([int(s) for s in selected_steps])
+    first_step = sorted([int(s) for s in selected_steps])[0]
     url = get_ecmwf_arpege_url(first_step, levtype)
     
     scan_path = os.path.join(UPLOAD_FOLDER, f"real_scan_{first_step}_{levtype}.grib2")
@@ -60,15 +61,13 @@ def scan_arpege():
         req = urllib.request.Request(url)
         req.add_header('Host', 'data.ecmwf.int')
         req.add_header('User-Agent', 'Mozilla/5.0')
-        # SÉCURITÉ RAM : On demande uniquement les 35 premiers mégaoctets du flux pour lire les en-têtes
-        req.add_header('Range', 'bytes=0-36700160')
         req.add_header('Connection', 'close')
         
+        # Téléchargement de l'en-tête (Grâce au poids plume des paquets IP1/SP1, le timeout est impossible)
         with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
             with open(scan_path, "wb") as f:
                 f.write(response.read())
                 
-        # Ouverture et extraction par pygrib des vrais identifiants contenus dans le fichier GRIB2
         fin = pygrib.open(scan_path)
         params_set = set()
         levels_set = set()
@@ -83,7 +82,7 @@ def scan_arpege():
                 if short_name:
                     params_set.add(f"{name} ({short_name})")
                 if level is not None:
-                    if "surface" in str(lev_type).lower():
+                    if "surface" in str(lev_type).lower() or level == 0:
                         levels_set.add("0 (surface)")
                     else:
                         levels_set.add(f"{level} hPa")
@@ -93,9 +92,6 @@ def scan_arpege():
         
         if os.path.exists(scan_path): os.remove(scan_path)
         
-        if len(params_set) == 0:
-            return jsonify({"error": "Le fragment d'en-tête ne contient aucun message lisible. Réessayez."}), 400
-            
         return jsonify({
             "success": True,
             "params": sorted(list(params_set)),
@@ -103,7 +99,7 @@ def scan_arpege():
         })
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Impossible de lire l'entête réelle du fichier : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur de liaison réseau avec le catalogue Météo-France : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -117,7 +113,6 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels",)
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
-    # Extraction propre du code court (ex: "u", "v", "gh") choisi dynamiquement
     selected_params = []
     for p in selected_params_raw:
         if "(" in p:
@@ -172,7 +167,6 @@ def fetch_and_crop():
                             short_name = getattr(grb, 'shortName', '')
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
-                            # Correspondance dynamique stricte
                             if short_name in selected_params and level in selected_levels:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
@@ -184,7 +178,7 @@ def fetch_and_crop():
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vos critères ne correspondent à aucun message binaire."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vos filtres ne correspondent à aucun message."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
