@@ -19,15 +19,20 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ecmwf_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF"""
-    yesterday = datetime.utcnow() - timedelta(days=1)
+def get_ogimet_arpege_url(step_val, levtype="sfc"):
+    """Calcule l'URL exacte des fichiers ARPEGE Monde 0.25 sur le serveur mondial Ogimet WMO"""
+    now = datetime.utcnow()
+    # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100% sur le miroir
+    yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
-    ecmwf_static_ip = "136.156.129.245"
     
-    suffix = "pl" if levtype == "pl" else "fc"
-    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
+    if levtype == "pl":
+        # Fichier d'altitude mondial léger (Vents standards hPa, gh, t)
+        return f"https://ogimet.com_{date_str}00_{step_str}_pl.grib2"
+    else:
+        # Fichier de surface mondial léger (Vent 10m, Pression MSL, tp)
+        return f"https://ogimet.com_{date_str}00_{step_str}_sfc.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -133,21 +138,19 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ecmwf_arpege_url(step_val, levtype)
+                url = get_ogimet_arpege_url(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
+                    # Téléchargement rapide du fichier complet pré-découpé d'Ogimet (110 Mo max)
                     req = urllib.request.Request(url)
-                    req.add_header('Host', 'data.ecmwf.int')
                     req.add_header('User-Agent', 'Mozilla/5.0')
                     req.add_header('Connection', 'close')
                     
-                    # STREAMING LIMITÉ : On ne télécharge que les 150 premiers Mo du flux
-                    # C'est largement suffisant pour chasser vos 5 altitudes (700 à 250 hPa)
                     with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                         with open(chunk_raw_path, "wb") as f:
-                            f.write(response.read(150 * 1024 * 1024))
+                            f.write(response.read())
                             
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
