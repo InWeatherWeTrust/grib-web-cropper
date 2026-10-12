@@ -19,15 +19,38 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ecmwf_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF (Zéro panne DNS)"""
-    yesterday = datetime.utcnow() - timedelta(days=1)
-    date_str = yesterday.strftime("%Y%m%d")
-    step_str = f"{step_val:03d}"
+def check_url_availability(url):
+    """Vérifie par une requête HEAD rapide si le fichier existe sur le serveur de l'ECMWF"""
+    ctx = ssl._create_unverified_context()
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        req.add_header('Host', 'data.ecmwf.int')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        with urllib.request.urlopen(req, context=ctx, timeout=3):
+            return True
+    except Exception:
+        return False
+
+def get_arpege_routing_strategy(step_val, levtype="sfc"):
+    """Analyse les catalogues en temps réel, choisit le meilleur run et recalcule l'échéance cible"""
     ecmwf_static_ip = "136.156.129.245"
-    
     suffix = "pl" if levtype == "pl" else "fc"
-    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
+    
+    # 1. STRATÉGIE A : Run 00Z d'AUJOURD'HUI (Idéal)
+    today_str = datetime.utcnow().strftime("%Y%m%d")
+    url_today = f"https://{ecmwf_static_ip}/forecasts/{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_val:03d}h-oper-{suffix}.grib2"
+    
+    if check_url_availability(url_today):
+        print(f"🎯 [STRATÉGIE A] Run ARPEGE 00Z d'aujourd'hui disponible ({today_str}). Échéance demandée : +{step_val}h")
+        return url_today, step_val
+        
+    # 2. STRATÉGIE B : Run 12Z d'HIER (Repli avec décalage temporel intelligent de +12h)
+    yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
+    adjusted_step = step_val + 12 # On ajoute 12h de profondeur pour compenser le retard du run
+    url_yesterday = f"https://{ecmwf_static_ip}/forecasts/{yesterday_str}/12z/arpege/0p25/oper/{yesterday_str}1200-{adjusted_step:03d}h-oper-{suffix}.grib2"
+    
+    print(f"⚠️ [STRATÉGIE B] Run d'aujourd'hui absent. Bascule sur 12Z d'hier ({yesterday_str}). Échéance ajustée : +{adjusted_step}h")
+    return url_yesterday, adjusted_step
 
 @app.route('/')
 @app.route('/arpege')
@@ -91,7 +114,7 @@ def scan_arpege():
     return jsonify({
         "success": True,
         "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()) if x.split() and x.split().isdigit() else 0)
     })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
@@ -103,6 +126,7 @@ def fetch_and_crop():
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
     selected_params_raw = data.get("params",)
+    selected_levels_raw = data.get("levels",)
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
     selected_params = []
@@ -111,6 +135,16 @@ def fetch_and_crop():
             selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
         else:
             selected_params.append(p.strip().lower())
+            
+    selected_levels = []
+    for l in selected_levels_raw:
+        try:
+            parts = str(l).strip().split()[0]
+            if parts.isdigit():
+                selected_levels.append(int(parts))
+        except:
+            if "surface" in str(l).lower():
+                selected_levels.append(0)
         
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
@@ -124,11 +158,12 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ecmwf_arpege_url(step_val, levtype)
+                # APPEL DE L'AIGUILLEUR TEMPOREL INTELLIGENT
+                url, target_step_binaire = get_arpege_routing_strategy(step_val, levtype)
+                
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                # ÉTAPE 1 : Téléchargement unitaire complet via l'IP fixe de l'ECMWF (Validé par le module CEP)
                 try:
                     req = urllib.request.Request(url)
                     req.add_header('Host', 'data.ecmwf.int')
@@ -142,15 +177,18 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
-                # ÉTAPE 2 : Découpe géographique locale par pygrib
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
                             short_name = str(getattr(grb, 'shortName', '')).lower()
+                            level = int(grb.level if hasattr(grb, 'level') else 0)
+                            is_surf = "surface" in str(grb.typeOfLevel).lower()
                             
-                            # Filtrage simplifié ultra-stable par identifiants courts
-                            if short_name in selected_params:
+                            match_p = short_name in selected_params
+                            match_l = level in selected_levels or (is_surf and 0 in selected_levels)
+                            
+                            if match_p and match_l:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
@@ -161,7 +199,7 @@ def fetch_and_crop():
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez vos filtres ou coordonnées."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez l'état de parution des fichiers à l'ECMWF."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
