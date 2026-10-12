@@ -116,7 +116,6 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # Extraction chirurgicale stricte du premier bloc de texte (ex: "500 hPa" -> "500" -> 500)
             parts = str(l).strip().split()
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
@@ -140,24 +139,15 @@ def fetch_and_crop():
                 
                 url = get_ecmwf_arpege_url(step_val, levtype)
                 
-                # ÉTAPE 1 : Indexation à distance via requêtes partielles (20 Mo)
-                header_path = os.path.join(UPLOAD_FOLDER, f"idx_{step_val}.grib2")
-                req_idx = urllib.request.Request(url)
-                req_idx.add_header('Host', 'data.ecmwf.int')
-                req_idx.add_header('Range', 'bytes=0-20971520')
-                req_idx.add_header('Connection', 'close')
+                req = urllib.request.Request(url)
+                req.add_header('Host', 'data.ecmwf.int')
+                req.add_header('User-Agent', 'Mozilla/5.0')
+                req.add_header('Connection', 'keep-alive')
                 
+                # ÉTAPE UNIQUE : Streaming et filtrage en tâche de fond directe via pygrib.open(url)
+                # On ne stocke pas le fichier temporaire lourd, pygrib lit directement le flux réseau
                 try:
-                    with urllib.request.urlopen(req_idx, context=ctx, timeout=30) as resp:
-                        with open(header_path, "wb") as f:
-                            f.write(resp.read())
-                except Exception as step_error:
-                    print(f"Saut de l'échéance {step_val} : {step_error}")
-                    continue
-                
-                # ÉTAPE 2 : Analyse de la structure locale par pygrib
-                if os.path.exists(header_path) and os.path.getsize(header_path) > 0:
-                    fin = pygrib.open(header_path)
+                    fin = pygrib.open(url)
                     for grb in fin:
                         try:
                             short_name = getattr(grb, 'shortName', '')
@@ -174,7 +164,9 @@ def fetch_and_crop():
                         except Exception:
                             continue
                     fin.close()
-                    os.remove(header_path)
+                except Exception as step_error:
+                    print(f"Saut de l'échéance {step_val} : {step_error}")
+                    continue
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
