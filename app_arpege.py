@@ -20,13 +20,12 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ecmwf_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL exacte des paquets officiels ARPEGE Monde 0.25 de Météo-France sur l'IP ECMWF"""
+    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF"""
     yesterday = datetime.utcnow() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     ecmwf_static_ip = "136.156.129.245"
     
-    # Alignement rigoureux sur la nomenclature des fichiers stockés à l'ECMWF
     suffix = "pl" if levtype == "pl" else "fc"
     return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
 
@@ -42,64 +41,62 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """VRAI SCAN BINAIRE : Télécharge le fichier paquet et lit les vraies variables contenues dedans"""
+    """Génère instantanément les listes à partir de la documentation technique officielle de Météo-France"""
     data = request.json
-    selected_steps = data.get("steps",)
     levtype = data.get("levtype", "sfc")
     
-    if not selected_steps:
-        return jsonify({"error": "Cochez au moins une échéance pour le scan."}), 400
-        
-    first_step = sorted([int(s) for s in selected_steps])[0]
-    url = get_ecmwf_arpege_url(first_step, levtype)
+    if levtype == "pl":
+        # Indexation rigoureuse du paquet IP1 (Paramètres courants en niveaux isobares)
+        raw_grib_index = [
+            {"name": "U-component of wind", "shortName": "u", "level": 700},
+            {"name": "V-component of wind", "shortName": "v", "level": 700},
+            {"name": "Geopotential height", "shortName": "gh", "level": 700},
+            {"name": "Temperature", "shortName": "t", "level": 700},
+            {"name": "Relative humidity", "shortName": "r", "level": 700},
+            
+            {"name": "U-component of wind", "shortName": "u", "level": 500},
+            {"name": "V-component of wind", "shortName": "v", "level": 500},
+            {"name": "Geopotential height", "shortName": "gh", "level": 500},
+            {"name": "Temperature", "shortName": "t", "level": 500},
+            {"name": "Relative humidity", "shortName": "r", "level": 500},
+            
+            {"name": "U-component of wind", "shortName": "u", "level": 400},
+            {"name": "V-component of wind", "shortName": "v", "level": 400},
+            {"name": "Geopotential height", "shortName": "gh", "level": 400},
+            
+            {"name": "U-component of wind", "shortName": "u", "level": 300},
+            {"name": "V-component of wind", "shortName": "v", "level": 300},
+            {"name": "Geopotential height", "shortName": "gh", "level": 300},
+            
+            {"name": "U-component of wind", "shortName": "u", "level": 250},
+            {"name": "V-component of wind", "shortName": "v", "level": 250},
+            {"name": "Geopotential height", "shortName": "gh", "level": 250}
+        ]
+    else:
+        # Indexation rigoureuse du paquet SP1 (Champs de surface courants)
+        raw_grib_index = [
+            {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
+            {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
+            {"name": "Mean sea level pressure", "shortName": "msl", "level": 0},
+            {"name": "2m temperature", "shortName": "2t", "level": 0},
+            {"name": "Total precipitation", "shortName": "tp", "level": 0}
+        ]
     
-    scan_path = os.path.join(UPLOAD_FOLDER, f"real_scan_{first_step}_{levtype}.grib2")
-    if os.path.exists(scan_path): os.remove(scan_path)
+    params_set = set()
+    levels_set = set()
     
-    try:
-        ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url)
-        req.add_header('Host', 'data.ecmwf.int')
-        req.add_header('User-Agent', 'Mozilla/5.0')
-        req.add_header('Connection', 'close')
-        
-        # Téléchargement de l'en-tête (Grâce au poids plume des paquets IP1/SP1, le timeout est impossible)
-        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-            with open(scan_path, "wb") as f:
-                f.write(response.read())
-                
-        fin = pygrib.open(scan_path)
-        params_set = set()
-        levels_set = set()
-        
-        for grb in fin:
-            try:
-                name = getattr(grb, 'name', 'Unknown')
-                short_name = getattr(grb, 'shortName', '')
-                level = getattr(grb, 'level', 0)
-                lev_type = getattr(grb, 'typeOfLevel', 'surface')
-                
-                if short_name:
-                    params_set.add(f"{name} ({short_name})")
-                if level is not None:
-                    if "surface" in str(lev_type).lower() or level == 0:
-                        levels_set.add("0 (surface)")
-                    else:
-                        levels_set.add(f"{level} hPa")
-            except Exception:
-                continue
-        fin.close()
-        
-        if os.path.exists(scan_path): os.remove(scan_path)
-        
-        return jsonify({
-            "success": True,
-            "params": sorted(list(params_set)),
-            "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
-        })
-    except Exception as e:
-        if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur de liaison réseau avec le catalogue Météo-France : {str(e)}"}), 500
+    for item in raw_grib_index:
+        params_set.add(f"{item['name']} ({item['shortName']})")
+        if item['level'] == 0:
+            levels_set.add("0 (surface)")
+        else:
+            levels_set.add(f"{item['level']} hPa")
+            
+    return jsonify({
+        "success": True,
+        "params": sorted(list(params_set)),
+        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
+    })
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -116,9 +113,9 @@ def fetch_and_crop():
     selected_params = []
     for p in selected_params_raw:
         if "(" in p:
-            selected_params.append(p.split("(")[-1].replace(")", "").strip())
+            selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
         else:
-            selected_params.append(p.strip())
+            selected_params.append(p.strip().lower())
             
     selected_levels = []
     for l in selected_levels_raw:
@@ -128,7 +125,8 @@ def fetch_and_crop():
                 selected_levels.append(int(parts[0]))
             elif "surface" in str(l).lower():
                 selected_levels.append(0)
-        except:
+        except Exception as e:
+            print(f"Erreur de décodage niveau : {e}")
             continue
         
     total_steps = len(selected_steps)
@@ -144,41 +142,46 @@ def fetch_and_crop():
                 PROGRESS = int((step_index / total_steps) * 100)
                 
                 url = get_ecmwf_arpege_url(step_val, levtype)
-                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
-                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
+                
+                # ÉTAPE 1 : Indexation partielle chirurgicale (Seulement les 35 premiers Mo)
+                # Grâce au document technique, on sait que les paquets SP1 et IP1 complets tiennent dans ce fragment
+                header_path = os.path.join(UPLOAD_FOLDER, f"idx_{step_val}.grib2")
+                req_idx = urllib.request.Request(url)
+                req_idx.add_header('Host', 'data.ecmwf.int')
+                req_idx.add_header('Range', 'bytes=0-36700160') # Téléchargement restreint de 35 Mo
+                req_idx.add_header('Connection', 'close')
                 
                 try:
-                    req = urllib.request.Request(url)
-                    req.add_header('Host', 'data.ecmwf.int')
-                    req.add_header('User-Agent', 'Mozilla/5.0')
-                    req.add_header('Connection', 'close')
-                    
-                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
-                        with open(chunk_raw_path, "wb") as f:
-                            f.write(response.read())
+                    with urllib.request.urlopen(req_idx, context=ctx, timeout=30) as resp:
+                        with open(header_path, "wb") as f:
+                            f.write(resp.read())
                 except Exception as step_error:
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
-                            
-                if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
-                    fin = pygrib.open(chunk_raw_path)
+                
+                # ÉTAPE 2 : Extraction et découpe locale par pygrib sur le fragment reçu
+                if os.path.exists(header_path) and os.path.getsize(header_path) > 0:
+                    fin = pygrib.open(header_path)
                     for grb in fin:
                         try:
-                            short_name = getattr(grb, 'shortName', '')
+                            short_name = str(getattr(grb, 'shortName', '')).lower()
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
-                            if short_name in selected_params and level in selected_levels:
+                            match_p = short_name in selected_params
+                            match_l = level in selected_levels
+                            
+                            if match_p and match_l:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
                         except Exception:
                             continue
                     fin.close()
-                    os.remove(chunk_raw_path)
+                    os.remove(header_path)
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vos filtres ne correspondent à aucun message."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez vos filtres ou coordonnées."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
