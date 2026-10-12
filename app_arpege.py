@@ -102,9 +102,9 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params", [])
-    selected_levels_raw = data.get("levels", [])
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    selected_params_raw = data.get("params",)
+    selected_levels_raw = data.get("levels",)
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
     selected_params = []
     for p in selected_params_raw:
@@ -116,6 +116,7 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
+            # CORRECTION CRUCIALE : Isolement précis du premier mot pour conversion numérique
             parts = str(l).strip().split()
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
@@ -160,10 +161,9 @@ def fetch_and_crop():
                         try:
                             short_name = getattr(grb, 'shortName', '')
                             level = int(grb.level if hasattr(grb, 'level') else 0)
-                            is_surf = "surface" in str(grb.typeOfLevel).lower()
                             
                             match_p = short_name in selected_params
-                            match_l = level in selected_levels or (is_surf and 0 in selected_levels)
+                            match_l = level in selected_levels
                             
                             if match_p and match_l:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
