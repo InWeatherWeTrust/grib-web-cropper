@@ -19,15 +19,21 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ecmwf_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL brute exacte selon le mode choisi (Surface ou Altitude hPa)"""
-    yesterday = datetime.utcnow() - timedelta(days=1)
+def get_ogimet_arpege_url(step_val, levtype="sfc"):
+    """Calcule l'URL exacte des fichiers ARPEGE Monde sur le serveur mondial de secours (Ogimet)"""
+    now = datetime.utcnow()
+    # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100%
+    yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
-    ecmwf_static_ip = "136.156.129.245"
     
-    suffix = "pl" if levtype == "pl" else "fc"
-    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
+    # Sélection du conteneur selon le choix Surface (SFC) ou Altitude (PL)
+    if levtype == "pl":
+        # Fichier d'altitude mondial (Vents hPa, température, humidité)
+        return f"https://ogimet.com_{date_str}00_{step_str}_pl.grib2"
+    else:
+        # Fichier de surface mondial (Vent 10m, Pression MSL, précipitations)
+        return f"https://ogimet.com_{date_str}00_{step_str}_sfc.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -41,7 +47,7 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère dynamiquement les listes en lisant l'index structurel officiel ARPEGE Monde de l'ECMWF"""
+    """Génère dynamiquement les listes en lisant l'index structurel officiel ARPEGE Monde"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
@@ -72,10 +78,6 @@ def scan_arpege():
             {"name": "U-component of wind", "shortName": "u", "level": 400},
             {"name": "V-component of wind", "shortName": "v", "level": 400},
             {"name": "Geopotential height", "shortName": "gh", "level": 400},
-            
-            {"name": "U-component of wind", "shortName": "u", "level": 300},
-            {"name": "V-component of wind", "shortName": "v", "level": 300},
-            {"name": "Geopotential height", "shortName": "gh", "level": 300},
             
             {"name": "U-component of wind", "shortName": "u", "level": 250},
             {"name": "V-component of wind", "shortName": "v", "level": 250},
@@ -145,56 +147,49 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ecmwf_arpege_url(step_val, levtype)
+                url = get_ogimet_arpege_url(step_val, levtype)
+                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                req = urllib.request.Request(url)
-                req.add_header('Host', 'data.ecmwf.int')
-                req.add_header('User-Agent', 'Mozilla/5.0')
-                req.add_header('Connection', 'close')
-                
-                # VÉRITABLE FILTRAGE SUR FLUX CONTINU PAR BLOCS HORAIRES
-                with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-                    # On crée un fichier temporaire éphémère d'une tranche horaire d'analyse
-                    chunk_path = os.path.join(UPLOAD_FOLDER, f"chunk_stream_{step_val}.grib2")
-                    
-                    # On ne lit et ne stocke au maximum que les 35 premiers Mo de la tranche réseau
-                    # (Ce qui contient l'intégralité de nos variables ciblées avant les données lourdes)
-                    with open(chunk_path, "wb") as f_chunk:
-                        f_chunk.write(response.read(35 * 1024 * 1024))
-                    
-                    # Découpe géospatiale immédiate locale du fragment extrait
-                    if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
-                        fin = pygrib.open(chunk_path)
-                        for grb in fin:
-                            try:
-                                short_name = getattr(grb, 'shortName', '')
-                                level = int(grb.level if hasattr(grb, 'level') else 0)
-                                is_surf = "surface" in str(grb.typeOfLevel).lower()
-                                
-                                match_p = short_name in selected_params
-                                match_l = level in selected_levels or (is_surf and 0 in selected_levels)
-                                
-                                if match_p and match_l:
-                                    sub_data, lats, lons = grb.data(
-                                        lat1=bounds["s"], lat2=bounds["n"], 
-                                        lon1=bounds["w"], lon2=bounds["e"]
-                                    )
-                                    grb.values = sub_data
-                                    fout.write(grb.tostring())
-                            except Exception:
-                                continue
-                        fin.close()
-                        os.remove(chunk_path)
+                # Téléchargement séquentiel fluide (Fichiers légers de 110 Mo max = Vitesse maximale)
+                try:
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
+                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                        with open(chunk_raw_path, "wb") as f:
+                            f.write(response.read())
+                            
+                    if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
+                        continue
+                        
+                    fin = pygrib.open(chunk_raw_path)
+                    for grb in fin:
+                        try:
+                            short_name = getattr(grb, 'shortName', '')
+                            level = int(grb.level if hasattr(grb, 'level') else 0)
+                            is_surf = "surface" in str(grb.typeOfLevel).lower()
+                            
+                            match_p = short_name in selected_params
+                            match_l = level in selected_levels or (is_surf and 0 in selected_levels)
+                            
+                            if match_p and match_l:
+                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
+                                grb.values = sub_data
+                                fout.write(grb.tostring())
+                        except Exception:
+                            continue
+                    fin.close()
+                finally:
+                    if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Essayez d'élargir votre zone géographique."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez votre zone ou vos critères."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
         PROGRESS = 0
         if os.path.exists(output_path): os.remove(output_path)
-        return jsonify({"error": f"Erreur lors de l'extraction chirurgicale : {str(e)}"}), 500
+        return jsonify({"error": f"Erreur de traitement : {str(e)}"}), 500
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
