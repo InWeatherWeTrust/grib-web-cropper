@@ -19,44 +19,15 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def resolve_dns_google_https(domain):
-    """Interroge l'API sécurisée Google DNS en HTTPS pour bypasser le DNS cassé de Render"""
-    try:
-        ctx = ssl._create_unverified_context()
-        dns_url = f"https://dns.google{domain}&type=A"
-        req = urllib.request.Request(dns_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            if "Answer" in data and len(data["Answer"]) > 0:
-                return data["Answer"]["data"]
-    except Exception as e:
-        print(f"⚠️ Échec Résolution Google DNS pour {domain}: {e}")
-    return None
-
-def get_ogimet_arpege_request(step_val, levtype="sfc"):
-    """Construit la requête HTTP sécurisée officielle vers le serveur mondial Ogimet WMO"""
-    now = datetime.utcnow()
-    yesterday = now - timedelta(days=1)
+def get_ecmwf_arpege_url(step_val, levtype="sfc"):
+    """Calcule l'URL brute exacte sur le serveur de stockage IP fixe de l'ECMWF (Zéro panne DNS)"""
+    yesterday = datetime.utcnow() - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
+    ecmwf_static_ip = "136.156.129.245"
     
-    domain = "ogimet.com"
-    dynamic_ip = resolve_dns_google_https(domain)
-    
-    suffix = "pl" if levtype == "pl" else "sfc"
-    path_url = f"/grib/ARPEGE_0.25_{date_str}00_{step_str}_{suffix}.grib2"
-    
-    if dynamic_ip:
-        url = f"https://{dynamic_ip}{path_url}"
-        req = urllib.request.Request(url)
-        req.add_header('Host', domain)
-    else:
-        url = f"https://{domain}{path_url}"
-        req = urllib.request.Request(url)
-        
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    req.add_header('Connection', 'close')
-    return req
+    suffix = "pl" if levtype == "pl" else "fc"
+    return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -70,7 +41,7 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère dynamiquement les listes conformes au descriptif technique officiel d'ARPEGE Ogimet"""
+    """Génère dynamiquement les listes conformes à la nomenclature de stockage de l'ECMWF"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
@@ -131,8 +102,8 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params", [])
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
+    selected_params_raw = data.get("params",)
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
     selected_params = []
     for p in selected_params_raw:
@@ -153,11 +124,17 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                req = get_ogimet_arpege_request(step_val, levtype)
+                url = get_ecmwf_arpege_url(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
+                # ÉTAPE 1 : Téléchargement unitaire complet via l'IP fixe de l'ECMWF (Validé par le module CEP)
                 try:
+                    req = urllib.request.Request(url)
+                    req.add_header('Host', 'data.ecmwf.int')
+                    req.add_header('User-Agent', 'Mozilla/5.0')
+                    req.add_header('Connection', 'close')
+                    
                     with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
@@ -165,13 +142,14 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
+                # ÉTAPE 2 : Découpe géographique locale par pygrib
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
                             short_name = str(getattr(grb, 'shortName', '')).lower()
                             
-                            # FILTRAGE ULTRA-STABLE SIMPLIFIÉ
+                            # Filtrage simplifié ultra-stable par identifiants courts
                             if short_name in selected_params:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
