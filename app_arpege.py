@@ -41,58 +41,69 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Génère dynamiquement les listes en lisant l'index de structure officiel ARPEGE Monde"""
+    """SCAN DYNAMIQUE RÉEL : Analyse les premiers Mo du vrai fichier pour lister les paramètres présents"""
     data = request.json
+    selected_steps = data.get("steps",)
     levtype = data.get("levtype", "sfc")
     
-    if levtype == "pl":
-        raw_grib_index = [
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 700},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 700},
-            {"name": "Geopotential height", "shortName": "gh", "level": 700},
-            {"name": "Temperature", "shortName": "t", "level": 700},
-            
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 500},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 500},
-            {"name": "Geopotential height", "shortName": "gh", "level": 500},
-            {"name": "Temperature", "shortName": "t", "level": 500},
-            
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 400},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 400},
-            {"name": "Geopotential height", "shortName": "gh", "level": 400},
-            
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 300},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 300},
-            {"name": "Geopotential height", "shortName": "gh", "level": 300},
-            
-            {"name": "U-component of wind", "shortName": "ucomp", "level": 250},
-            {"name": "V-component of wind", "shortName": "vcomp", "level": 250},
-            {"name": "Geopotential height", "shortName": "gh", "level": 250}
-        ]
-    else:
-        raw_grib_index = [
-            {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
-            {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
-            {"name": "Mean sea level pressure", "shortName": "msl", "level": 0},
-            {"name": "2m temperature", "shortName": "2t", "level": 0},
-            {"name": "Total precipitation", "shortName": "tp", "level": 0}
-        ]
+    if not selected_steps:
+        return jsonify({"error": "Cochez au moins une échéance pour le scan."}), 400
+        
+    first_step = sorted([int(s) for s in selected_steps])
+    url = get_ecmwf_arpege_url(first_step, levtype)
     
-    params_set = set()
-    levels_set = set()
+    scan_path = os.path.join(UPLOAD_FOLDER, f"real_scan_{first_step}_{levtype}.grib2")
+    if os.path.exists(scan_path): os.remove(scan_path)
     
-    for item in raw_grib_index:
-        params_set.add(f"{item['name']} ({item['shortName']})")
-        if item['level'] == 0:
-            levels_set.add("0 (surface)")
-        else:
-            levels_set.add(f"{item['level']} hPa")
+    try:
+        ctx = ssl._create_unverified_context()
+        req = urllib.request.Request(url)
+        req.add_header('Host', 'data.ecmwf.int')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        # SÉCURITÉ RAM : On demande uniquement les 35 premiers mégaoctets du flux pour lire les en-têtes
+        req.add_header('Range', 'bytes=0-36700160')
+        req.add_header('Connection', 'close')
+        
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+            with open(scan_path, "wb") as f:
+                f.write(response.read())
+                
+        # Ouverture et extraction par pygrib des vrais identifiants contenus dans le fichier GRIB2
+        fin = pygrib.open(scan_path)
+        params_set = set()
+        levels_set = set()
+        
+        for grb in fin:
+            try:
+                name = getattr(grb, 'name', 'Unknown')
+                short_name = getattr(grb, 'shortName', '')
+                level = getattr(grb, 'level', 0)
+                lev_type = getattr(grb, 'typeOfLevel', 'surface')
+                
+                if short_name:
+                    params_set.add(f"{name} ({short_name})")
+                if level is not None:
+                    if "surface" in str(lev_type).lower():
+                        levels_set.add("0 (surface)")
+                    else:
+                        levels_set.add(f"{level} hPa")
+            except Exception:
+                continue
+        fin.close()
+        
+        if os.path.exists(scan_path): os.remove(scan_path)
+        
+        if len(params_set) == 0:
+            return jsonify({"error": "Le fragment d'en-tête ne contient aucun message lisible. Réessayez."}), 400
             
-    return jsonify({
-        "success": True,
-        "params": sorted(list(params_set)),
-        "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
-    })
+        return jsonify({
+            "success": True,
+            "params": sorted(list(params_set)),
+            "levels": sorted(list(levels_set), key=lambda x: int(x.split()[0]) if x.split() and x.split()[0].isdigit() else 0)
+        })
+    except Exception as e:
+        if os.path.exists(scan_path): os.remove(scan_path)
+        return jsonify({"error": f"Impossible de lire l'entête réelle du fichier : {str(e)}"}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -106,6 +117,7 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels",)
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
+    # Extraction propre du code court (ex: "u", "v", "gh") choisi dynamiquement
     selected_params = []
     for p in selected_params_raw:
         if "(" in p:
@@ -121,8 +133,7 @@ def fetch_and_crop():
                 selected_levels.append(int(parts[0]))
             elif "surface" in str(l).lower():
                 selected_levels.append(0)
-        except Exception as e:
-            print(f"Erreur de décodage niveau : {e}")
+        except:
             continue
         
     total_steps = len(selected_steps)
@@ -161,14 +172,8 @@ def fetch_and_crop():
                             short_name = getattr(grb, 'shortName', '')
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
-                            # Tolérance de sécurité pour capter à la fois les codes u/v et ucomp/vcomp
-                            match_p = short_name in selected_params
-                            if not match_p and short_name == 'u' and 'ucomp' in selected_params: match_p = True
-                            if not match_p and short_name == 'v' and 'vcomp' in selected_params: match_p = True
-                            
-                            match_l = level in selected_levels
-                            
-                            if match_p and match_l:
+                            # Correspondance dynamique stricte
+                            if short_name in selected_params and level in selected_levels:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
@@ -179,7 +184,7 @@ def fetch_and_crop():
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez vos filtres ou coordonnées."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vos critères ne correspondent à aucun message binaire."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
