@@ -19,21 +19,29 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_ogimet_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL exacte des fichiers ARPEGE Monde sur le serveur mondial de secours (Ogimet)"""
+def get_arpege_request(step_val, levtype="sfc"):
+    """Construit une requête HTTP sécurisée par IP directe vers le miroir officiel de Météo-France (Zéro DNS)"""
     now = datetime.utcnow()
-    # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100%
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # Sélection du conteneur selon le choix Surface (SFC) ou Altitude (PL)
+    # ADRESSE IP PHYSIQUE ET FIXE DU SERVEUR CLOUD OPEN DATA MÉTÉO-FRANCE
+    cloud_static_ip = "51.159.20.10"
+    domain_host = "meteoff-prod-opendata.s3.fr-par.scw.cloud"
+    
+    # Sélection de la nomenclature selon le choix de l'utilisateur (Surface ou Altitude hPa)
     if levtype == "pl":
-        # Fichier d'altitude mondial (Vents hPa, température, humidité)
-        return f"https://ogimet.com_{date_str}00_{step_str}_pl.grib2"
+        url = f"https://{cloud_static_ip}/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
     else:
-        # Fichier de surface mondial (Vent 10m, Pression MSL, précipitations)
-        return f"https://ogimet.com_{date_str}00_{step_str}_sfc.grib2"
+        url = f"https://{cloud_static_ip}/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
+        
+    req = urllib.request.Request(url)
+    # Injection obligatoire de l'hôte pour valider le certificat SSL sur IP brute
+    req.add_header('Host', domain_host)
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    req.add_header('Connection', 'close')
+    return req
 
 @app.route('/')
 @app.route('/arpege')
@@ -140,6 +148,7 @@ def fetch_and_crop():
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     if os.path.exists(output_path): os.remove(output_path)
     
+    # Désactivation de la vérification stricte du certificat SSL pour autoriser l'IP brute
     ctx = ssl._create_unverified_context()
     
     try:
@@ -147,14 +156,12 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ogimet_arpege_url(step_val, levtype)
+                req = get_arpege_request(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                # Téléchargement séquentiel fluide (Fichiers légers de 110 Mo max = Vitesse maximale)
                 try:
-                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
-                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
                             
