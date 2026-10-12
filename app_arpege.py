@@ -39,13 +39,13 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Scanne 100% des paramètres du fichier géant en lisant uniquement les en-têtes via un flux réseau"""
+    """Scanne les paramètres du fichier géant en lisant un échantillon d'en-têtes via un flux réseau"""
     data = request.json
     selected_steps = data.get("steps",)
     if not selected_steps:
         return jsonify({"error": "Cochez au moins une échéance."}), 400
         
-    first_step = sorted([int(s) for s in selected_steps])
+    first_step = sorted([int(s) for s in selected_steps])[0]
     url = get_ecmwf_arpege_url(first_step)
     
     scan_path = os.path.join(UPLOAD_FOLDER, f"stream_scan_{first_step}.grib2")
@@ -61,16 +61,12 @@ def scan_arpege():
         params_set = set()
         levels_set = set()
         
-        # OUVERTURE DU FLUX RÉSEAU CONTINU (Pas de stockage disque des données lourdes)
+        # Lecture partielle des 15 premiers Mo pour chasser les en-têtes
         with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-            # On télécharge uniquement les 15 premiers Mo qui contiennent une variété de messages d'en-tête
-            # suffisant pour ARPEGE Monde pour lister les types de variables de surface et d'altitude de référence
             buffer = response.read(15 * 1024 * 1024)
-            
             with open(scan_path, "wb") as f:
                 f.write(buffer)
                 
-        # Votre serveur Python analyse lui-même la structure extraite
         fin = pygrib.open(scan_path)
         for grb in fin:
             try:
@@ -82,7 +78,7 @@ def scan_arpege():
                 if short_name:
                     params_set.add(f"{name} ({short_name})")
                 if level is not None:
-                    levels_set.add(f"{level} ({lev_type})")
+                    levels_set.add(int(level))
             except Exception:
                 continue
         fin.close()
@@ -105,11 +101,23 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels",)
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
-    selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
-    selected_levels =
+    # CORRECTION DE SYNTAXE : Initialisation propre des listes de réception
+    selected_params = []
+    for p in selected_params_raw:
+        if "(" in p:
+            selected_params.append(p.split("(")[-1].replace(")", "").strip())
+        else:
+            selected_params.append(p.strip())
+            
+    selected_levels = []
     for l in selected_levels_raw:
-        try: selected_levels.append(int(l.split("(").strip()))
-        except: continue
+        try:
+            if "(" in str(l):
+                selected_levels.append(int(str(l).split("(")[0].strip()))
+            else:
+                selected_levels.append(int(str(l).strip()))
+        except:
+            continue
         
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
