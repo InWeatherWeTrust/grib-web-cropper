@@ -46,7 +46,6 @@ def scan_arpege():
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        # Indexation exacte du paquet IP1 (Paramètres courants en niveaux isobares Météo-France)
         raw_grib_index = [
             {"name": "U-component of wind", "shortName": "ucomp", "level": 700},
             {"name": "V-component of wind", "shortName": "vcomp", "level": 700},
@@ -73,7 +72,6 @@ def scan_arpege():
             {"name": "Geopotential height", "shortName": "gh", "level": 250}
         ]
     else:
-        # Indexation exacte du paquet SP1 (Paramètres de surface courants Météo-France)
         raw_grib_index = [
             {"name": "10m u-component of wind", "shortName": "10u", "level": 0},
             {"name": "10m v-component of wind", "shortName": "10v", "level": 0},
@@ -106,9 +104,9 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params",)
-    selected_levels_raw = data.get("levels",)
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
+    selected_params_raw = data.get("params", [])
+    selected_levels_raw = data.get("levels", [])
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
     selected_params = []
     for p in selected_params_raw:
@@ -123,8 +121,6 @@ def fetch_and_crop():
             parts = str(l).strip().split()
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
-            elif "surface" in str(l).lower():
-                selected_levels.append(0)
         except Exception as e:
             print(f"Erreur décodage niveau : {e}")
             continue
@@ -165,9 +161,15 @@ def fetch_and_crop():
                             short_name = str(getattr(grb, 'shortName', '')).lower()
                             level = int(grb.level if hasattr(grb, 'level') else 0)
                             
-                            # Correspondance inclusive des codes du modèle français
+                            # FILTRAGE INTELLIGENT ET ASSOUPLI CORRIGÉ
                             match_p = short_name in selected_params
-                            match_l = level in selected_levels
+                            
+                            if levtype == "sfc":
+                                # En mode surface, on valide toutes les hauteurs de niveau sol
+                                match_l = True
+                            else:
+                                # En mode altitude, on valide uniquement les couches isobariques cochées
+                                match_l = level in selected_levels
                             
                             if match_p and match_l:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
