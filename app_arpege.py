@@ -142,26 +142,26 @@ def fetch_and_crop():
                 PROGRESS = int((step_index / total_steps) * 100)
                 
                 url = get_ecmwf_arpege_url(step_val, levtype)
+                chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
+                if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
-                # ÉTAPE 1 : Indexation partielle chirurgicale (Seulement les 35 premiers Mo)
-                # Grâce au document technique, on sait que les paquets SP1 et IP1 complets tiennent dans ce fragment
-                header_path = os.path.join(UPLOAD_FOLDER, f"idx_{step_val}.grib2")
-                req_idx = urllib.request.Request(url)
-                req_idx.add_header('Host', 'data.ecmwf.int')
-                req_idx.add_header('Range', 'bytes=0-36700160') # Téléchargement restreint de 35 Mo
-                req_idx.add_header('Connection', 'close')
-                
+                # ÉTAPE 1 : Téléchargement complet du fichier paquet (Seulement 26 Mo ou 279 Mo, validé par l'en-tête Host)
                 try:
-                    with urllib.request.urlopen(req_idx, context=ctx, timeout=30) as resp:
-                        with open(header_path, "wb") as f:
-                            f.write(resp.read())
+                    req = urllib.request.Request(url)
+                    req.add_header('Host', 'data.ecmwf.int')
+                    req.add_header('User-Agent', 'Mozilla/5.0')
+                    req.add_header('Connection', 'close')
+                    
+                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
+                        with open(chunk_raw_path, "wb") as f:
+                            f.write(response.read())
                 except Exception as step_error:
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
-                
-                # ÉTAPE 2 : Extraction et découpe locale par pygrib sur le fragment reçu
-                if os.path.exists(header_path) and os.path.getsize(header_path) > 0:
-                    fin = pygrib.open(header_path)
+                            
+                # ÉTAPE 2 : Découpe géospatiale locale par pygrib sur le fichier entier
+                if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
+                    fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
                             short_name = str(getattr(grb, 'shortName', '')).lower()
@@ -177,7 +177,7 @@ def fetch_and_crop():
                         except Exception:
                             continue
                     fin.close()
-                    os.remove(header_path)
+                    os.remove(chunk_raw_path)
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
