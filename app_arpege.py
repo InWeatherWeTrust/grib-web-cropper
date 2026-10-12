@@ -20,22 +20,21 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ecmwf_arpege_url(step_val):
-    """Calcule l'URL exacte du run 00Z le plus récent et disponible à coup sûr"""
+    """Calcule l'URL exacte du run 00Z le plus récent sur les serveurs de stockage ECMWF"""
     ctx = ssl._create_unverified_context()
     step_str = f"{step_val:03d}"
     
-    # 1. On tente d'abord de récupérer le run de 00Z d'AUJOURD'HUI
+    # 1. Tentative sur le run de 00Z d'AUJOURD'HUI (URL structurelle corrigée)
     today_str = datetime.utcnow().strftime("%Y%m%d")
     url_today = f"https://ecmwf.int{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_str}h-oper-fc.grib2"
     
     try:
-        # On teste par une requête HEAD ultra-rapide si le run d'aujourd'hui est en ligne
         req = urllib.request.Request(url_today, method='HEAD', headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, context=ctx, timeout=3):
+        with urllib.request.urlopen(req, context=ctx, timeout=4):
             print(f"🎯 Run ARPEGE 00Z d'aujourd'hui trouvé ({today_str})")
             return url_today
     except Exception:
-        # 2. Si le run d'aujourd'hui n'est pas encore publié, repli sur le 00Z d'HIER
+        # 2. Repli sur le run de 00Z d'HIER si celui d'aujourd'hui n'est pas encore en ligne
         yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
         print(f"⚠️ Run d'aujourd'hui indisponible, repli sur le 00Z d'hier ({yesterday_str})")
         return f"https://ecmwf.int{yesterday_str}/00z/arpege/0p25/oper/{yesterday_str}0000-{step_str}h-oper-fc.grib2"
@@ -112,7 +111,7 @@ def fetch_and_crop():
     selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
     
     selected_params = [p.split("(")[-1].replace(")", "").strip() for p in selected_params_raw if "(" in p]
-    selected_levels = [int(l.split("(")[0].strip()) for l in selected_levels_raw if "(" in l]
+    selected_levels = [int(l.split("(")[0].strip()) for l in selected_levels_raw if "(" in l] or [int(l) for l in selected_levels_raw if l.isdigit()]
     
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
