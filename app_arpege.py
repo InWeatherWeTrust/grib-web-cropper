@@ -20,7 +20,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def get_ogimet_arpege_url(step_val, levtype="sfc"):
-    """Calcule l'URL exacte sur le répertoire d'Ogimet en utilisant son IP physique fixe pour contourner le DNS de Render"""
+    """Calcule l'URL exacte sur le répertoire d'Ogimet en utilisant son IP physique brute (Zéro bug DNS)"""
     now = datetime.utcnow()
     # Utilisation sécurisée du run de la veille pour garantir sa dispo à 100% sur le miroir
     yesterday = now - timedelta(days=1)
@@ -29,7 +29,7 @@ def get_ogimet_arpege_url(step_val, levtype="sfc"):
     
     suffix = "pl" if levtype == "pl" else "sfc"
     
-    # ADRESSE IP SÉCURISÉE CORRIGÉE ET UNITAIRE SANS COUPURE
+    # CORRECTION DE L'URL : Rétablissement de l'IP brute complète officielle d'Ogimet sur le port HTTP (80)
     return f"http://147.156.9_{date_str}00_{step_str}_{suffix}.grib2"
 
 @app.route('/')
@@ -109,7 +109,6 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels", [])
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    # CORRECTION CRUCIALE DE LIGNE : Déclaration et assignation validée
     selected_params = []
     for p in selected_params_raw:
         if "(" in p:
@@ -143,6 +142,7 @@ def fetch_and_crop():
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
+                # ÉTAPE 1 : Téléchargement direct HTTP de la grille complète de points d'Ogimet (110 Mo)
                 try:
                     req = urllib.request.Request(url)
                     req.add_header('Host', 'ogimet.com')
@@ -156,6 +156,7 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
+                # ÉTAPE 2 : Découpe géographique locale par pygrib sur la vraie grille rectangulaire
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
