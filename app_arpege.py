@@ -27,7 +27,7 @@ def get_ogimet_arpege_url(step_val, levtype="sfc"):
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # CORRECTION DE L'URL : Remplacement du tiret bas par le bon slash de répertoire
+    # CORRECTION CRUCIALE DE L'URL : Remplacement du tiret bas par le bon slash de dossier "/"
     if levtype == "pl":
         return f"https://ogimet.com_{date_str}00_{step_str}_pl.grib2"
     else:
