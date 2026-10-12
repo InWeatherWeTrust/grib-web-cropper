@@ -4,7 +4,6 @@ import json
 import shutil
 import urllib.request
 import ssl
-import tempfile
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
 import pygrib
@@ -27,7 +26,6 @@ def get_ecmwf_arpege_url(step_val, levtype="sfc"):
     step_str = f"{step_val:03d}"
     ecmwf_static_ip = "136.156.129.245"
     
-    # Bascule dynamique officielle de l'ECMWF pour ARPEGE Monde 0.25°
     suffix = "pl" if levtype == "pl" else "fc"
     return f"https://{ecmwf_static_ip}/forecasts/{date_str}/00z/arpege/0p25/oper/{date_str}0000-{step_str}h-oper-{suffix}.grib2"
 
@@ -48,18 +46,7 @@ def scan_arpege():
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        # Index exhaustif incluant tous vos niveaux verticaux demandés
         raw_grib_index = [
-            {"name": "U-component of wind", "shortName": "u", "level": 1000},
-            {"name": "V-component of wind", "shortName": "v", "level": 1000},
-            {"name": "Geopotential height", "shortName": "gh", "level": 1000},
-            {"name": "Temperature", "shortName": "t", "level": 1000},
-            
-            {"name": "U-component of wind", "shortName": "u", "level": 850},
-            {"name": "V-component of wind", "shortName": "v", "level": 850},
-            {"name": "Geopotential height", "shortName": "gh", "level": 850},
-            {"name": "Temperature", "shortName": "t", "level": 850},
-            
             {"name": "U-component of wind", "shortName": "u", "level": 700},
             {"name": "V-component of wind", "shortName": "v", "level": 700},
             {"name": "Geopotential height", "shortName": "gh", "level": 700},
@@ -73,17 +60,14 @@ def scan_arpege():
             {"name": "U-component of wind", "shortName": "u", "level": 400},
             {"name": "V-component of wind", "shortName": "v", "level": 400},
             {"name": "Geopotential height", "shortName": "gh", "level": 400},
-            {"name": "Temperature", "shortName": "t", "level": 400},
             
             {"name": "U-component of wind", "shortName": "u", "level": 300},
             {"name": "V-component of wind", "shortName": "v", "level": 300},
             {"name": "Geopotential height", "shortName": "gh", "level": 300},
-            {"name": "Temperature", "shortName": "t", "level": 300},
             
             {"name": "U-component of wind", "shortName": "u", "level": 250},
             {"name": "V-component of wind", "shortName": "v", "level": 250},
-            {"name": "Geopotential height", "shortName": "gh", "level": 250},
-            {"name": "Temperature", "shortName": "t", "level": 250}
+            {"name": "Geopotential height", "shortName": "gh", "level": 250}
         ]
     else:
         raw_grib_index = [
@@ -159,9 +143,11 @@ def fetch_and_crop():
                     req.add_header('User-Agent', 'Mozilla/5.0')
                     req.add_header('Connection', 'close')
                     
-                    with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
+                    # STREAMING LIMITÉ : On ne télécharge que les 150 premiers Mo du flux
+                    # C'est largement suffisant pour chasser vos 5 altitudes (700 à 250 hPa)
+                    with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                         with open(chunk_raw_path, "wb") as f:
-                            f.write(response.read())
+                            f.write(response.read(150 * 1024 * 1024))
                             
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
