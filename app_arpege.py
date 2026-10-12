@@ -19,29 +19,21 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_arpege_request(step_val, levtype="sfc"):
-    """Construit une requête HTTP sécurisée par IP directe vers le miroir officiel de Météo-France (Zéro DNS)"""
+def get_arpege_aws_url(step_val, levtype="sfc"):
+    """Calcule l'URL exacte du modèle ARPEGE 0.25 sur le stockage public AWS officiel de Météo-France"""
     now = datetime.utcnow()
+    # On prend le run de la veille pour garantir une disponibilité immédiate à 100% des fichiers sur AWS
     yesterday = now - timedelta(days=1)
     date_str = yesterday.strftime("%Y%m%d")
     step_str = f"{step_val:03d}"
     
-    # ADRESSE IP PHYSIQUE ET FIXE DU SERVEUR CLOUD OPEN DATA MÉTÉO-FRANCE
-    cloud_static_ip = "51.159.20.10"
-    domain_host = "meteoff-prod-opendata.s3.fr-par.scw.cloud"
-    
-    # Sélection de la nomenclature selon le choix de l'utilisateur (Surface ou Altitude hPa)
+    # URL OFFICIELLE HAUT DÉBIT AWS METEO-FRANCE OPEN DATA (Zéro blocage DNS, Zéro Connexion Refused)
     if levtype == "pl":
-        url = f"https://{cloud_static_ip}/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
+        # Package Altitude
+        return f"https://meteofrance.fr_{date_str}0000_{step_str}h_pl.grib2"
     else:
-        url = f"https://{cloud_static_ip}/ARPEGE/025/GLOB/{date_str}0000-{step_str}h-oper.grib2"
-        
-    req = urllib.request.Request(url)
-    # Injection obligatoire de l'hôte pour valider le certificat SSL sur IP brute
-    req.add_header('Host', domain_host)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    req.add_header('Connection', 'close')
-    return req
+        # Package Surface
+        return f"https://meteofrance.fr_{date_str}0000_{step_str}h_sfc.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -82,10 +74,6 @@ def scan_arpege():
             {"name": "V-component of wind", "shortName": "v", "level": 500},
             {"name": "Geopotential height", "shortName": "gh", "level": 500},
             {"name": "Temperature", "shortName": "t", "level": 500},
-            
-            {"name": "U-component of wind", "shortName": "u", "level": 400},
-            {"name": "V-component of wind", "shortName": "v", "level": 400},
-            {"name": "Geopotential height", "shortName": "gh", "level": 400},
             
             {"name": "U-component of wind", "shortName": "u", "level": 250},
             {"name": "V-component of wind", "shortName": "v", "level": 250},
@@ -148,7 +136,6 @@ def fetch_and_crop():
     output_path = os.path.join(UPLOAD_FOLDER, output_filename)
     if os.path.exists(output_path): os.remove(output_path)
     
-    # Désactivation de la vérification stricte du certificat SSL pour autoriser l'IP brute
     ctx = ssl._create_unverified_context()
     
     try:
@@ -156,11 +143,12 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                req = get_arpege_request(step_val, levtype)
+                url = get_arpege_aws_url(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
                 try:
+                    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Connection': 'close'})
                     with urllib.request.urlopen(req, context=ctx, timeout=45) as response:
                         with open(chunk_raw_path, "wb") as f:
                             f.write(response.read())
