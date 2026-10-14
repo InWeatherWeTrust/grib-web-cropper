@@ -55,7 +55,7 @@ def scan_ecmwf():
     try:
         client = Client(source="ecmwf")
         client.retrieve(
-            date=-1,
+            date=0, # CORRECTION : Scan sur le run d'AUJOURD'HUI
             time="00",
             step=first_step,
             stream="oper",
@@ -131,7 +131,7 @@ def fetch_and_crop():
 
                 try:
                     client.retrieve(
-                        date=-1,
+                        date=0, # CORRECTION : Téléchargement sur le run d'AUJOURD'HUI
                         time="00",
                         step=step_val,
                         stream="oper",
@@ -153,26 +153,23 @@ def fetch_and_crop():
                             level_match = level in selected_levels if selected_levels else True
 
                             if param_match and level_match:
-                                # 1. Lecture de la matrice globale originale
                                 values = grb.values
                                 lats, lons = grb.latlons()
                                 
-                                # Bascule des longitudes (0/360) vers le format standard (-180/180)
+                                # Ajustement rigoureux des coordonnées pour la conformité XyGrib
                                 lons_adjusted = np.where(lons > 180, lons - 360, lons)
                                 
-                                # 2. Création du masque binaire sur vos coordonnées cardinales
                                 inside_zone = (
                                     (lats >= bounds["s"]) & (lats <= bounds["n"]) &
                                     (lons_adjusted >= bounds["w"]) & (lons_adjusted <= bounds["e"])
                                 )
                                 
-                                # 3. REPRÉSENTATION PHYSIQUE CORRIGÉE :
-                                # On utilise un tableau masqué NumPy (MaskedArray).
-                                # Les points à l'extérieur (not inside_zone) sont marqués comme invalides/masqués.
-                                # À l'écriture, pygrib va automatiquement générer un 'Bitmap' binaire officiel GRIB2
-                                # indiquant aux logiciels que ces zones sont vides (Donnée absente).
                                 masked_values = np.ma.masked_array(values, mask=~inside_zone)
                                 grb.values = masked_values
+                                
+                                # BI-COMPATIBILITE : On bascule l'en-tête de la grille au format Ouest/Est (-180 à 180)
+                                grb['longitudeOfFirstGridPointInDegrees'] = -180.0
+                                grb['longitudeOfLastGridPointInDegrees'] = 179.75
                                 
                                 fout.write(grb.tostring())
                         except Exception:
