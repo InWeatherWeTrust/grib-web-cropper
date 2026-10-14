@@ -68,7 +68,6 @@ def scan_arpege():
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        # Paramètres d'altitude validés par votre inspection (Paquet IP1)
         params = [
             "U component of wind (u)",
             "V component of wind (v)",
@@ -78,7 +77,6 @@ def scan_arpege():
         ]
         levels = ["1000 hPa", "850 hPa", "700 hPa", "500 hPa", "400 hPa", "300 hPa", "250 hPa"]
     else:
-        # Paramètres de surface validés (Paquet SP1)
         params = [
             "10m U-component of wind (10u)",
             "10m V-component of wind (10v)",
@@ -102,14 +100,14 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels", [])
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    # Isolation des shortNames courts en minuscules
+    # Extraction propre des shortNames courts
     selected_params = [p.split("(")[-1].replace(")", "").strip().lower() for p in selected_params_raw if "(" in p]
     
     selected_levels = []
     for l in selected_levels_raw:
         try:
             parts = str(l).strip().split()
-            # CORRECTION DE SYNTAXE : On valide l'extraction sur le premier élément textuel de la liste
+            # CORRECTION TECHNIQUE : On extrait et teste le premier élément textuel [0] de la liste scindée
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
         except Exception as e:
@@ -148,7 +146,7 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
-                # FILTRAGE ALIGNÉ À 100% SUR VOTRE RÉSULTAT DU TERMINAL
+                # FILTRAGE ALIGNÉ À 100% SUR LE SCAN DU TERMINAL
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
@@ -159,6 +157,7 @@ def fetch_and_crop():
                             
                             match_p = short_name in selected_params
                             
+                            # Validation selon les types décodés par votre terminal (isobaricinhpa) [1]
                             if levtype == "sfc":
                                 match_l = "surface" in lev_type or "ground" in lev_type or level == 0
                             else:
