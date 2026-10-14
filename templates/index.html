@@ -2,261 +2,242 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Cloud Cropper - Multi-Mode Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hub Météo Central - Découpeur GRIB GFS/CEP</title>
+    <!-- Bootstrap CSS pour un design propre -->
+    <link href="https://jsdelivr.net" rel="stylesheet">
+    <!-- Leaflet CSS pour la carte interactive -->
+    <link rel="stylesheet" href="https://unpkg.com" />
     <style>
-        body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
-        #sidebar { width: 420px; padding: 20px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; overflow-y: auto; }
-        #map-container { flex: 1; height: 100%; position: relative; background: #0b0f19; overflow: hidden; }
-        #map-background { position: absolute; top:0; left:0; width:100%; height:100%; opacity:0.65; z-index:1; }
-        #grid-canvas { position: absolute; top:0; left:0; width:100%; height:100%; cursor: crosshair; z-index:2; }
-        button { background: #0ea5e9; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 13px; }
-        button:hover { background: #0284c7; }
-        button:disabled { background: #475569; cursor: not-allowed; }
-        select, input[type="text"] { background: #1e293b; color: white; border: 1px solid #334155; border-radius: 5px; padding: 6px; font-size: 13px; width: 100%; box-sizing: border-box; }
-        select[multiple] { min-height: 140px; }
-        h3 { font-size: 14px; margin-top: 5px; margin-bottom: 2px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-        .coords { font-family: monospace; color: #34d399; background: #1e293b; padding: 8px; border-radius: 5px; border: 1px solid #334155; font-size: 12px; }
-        .progress-box { display: none; flex-direction: column; gap: 5px; background: #1e293b; padding: 8px; border-radius: 5px; border: 1px solid #334155; }
-        progress { width: 100%; height: 12px; accent-color: #0ea5e9; }
-        .leaflet-zoom-box { border: 2px dashed #38bdf8; background: rgba(56, 189, 248, 0.18); position: absolute; z-index: 800; pointer-events: none; }
-        .btn-success { background: #10b981; } .btn-success:hover { background: #059669; }
-        .btn-warning { background: #f59e0b; color: #000; } .btn-warning:hover { background: #d97706; }
-        .step-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
-        .step-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #cbd5e1; }
+        body { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .card { background-color: #1e1e1e; border: 1px solid #2d2d2d; color: #e0e0e0; }
+        #map { height: 450px; border-radius: 8px; border: 2px solid #3d3d3d; }
+        .btn-primary { background-color: #0d6efd; border: none; }
+        .btn-primary:hover { background-color: #0b5ed7; }
+        .step-box { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 8px; }
+        .step-item { background: #2a2a2a; border: 1px solid #3d3d3d; text-align: center; padding: 6px; border-radius: 4px; cursor: pointer; }
+        .step-item.active { background: #0d6efd; border-color: #0d6efd; color: #fff; }
     </style>
 </head>
-<body>
+<body class="py-4">
+<div class="container-fluid px-4">
+    <header class="mb-4 pb-2 border-bottom border-secondary">
+        <h1 class="text-primary fw-bold">⛵ Hub Central - Découpeur Géospatial GRIB</h1>
+        <p class="text-muted">Sélectionnez votre zone sur la carte, scannez le catalogue et téléchargez votre fichier GRIB sur mesure.</p>
+    </header>
 
-    <div id="sidebar">
-        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px;">🌐 GRIB Cloud Cropper</h2>
-        <div id="status" style="color: #94a3b8; font-size: 11px;">Configurez le type de données puis lancez le scan.</div>
-        
-        <h3>⚙️ Type de Données GRIB :</h3>
-        <select id="mode-select" style="border: 1px solid #0ea5e9; font-weight: bold; color: #0ea5e9;">
-            <option value="sfc" selected>🌍 MODE SURFACE (Vent à 10m, Pression MSL, etc.)</option>
-            <option value="pl">🌬️ MODE ALTITUDE (Pression, Vents verticaux hPa, etc.)</option>
-        </select>
-
-        <h3>⏱️ 1. Échéances :</h3>
-        <div class="step-grid" id="step-container">
-            <label class="step-item"><input type="checkbox" value="12" checked> +12h</label>
-            <label class="step-item"><input type="checkbox" value="24" checked> +24h</label>
-            <label class="step-item"><input type="checkbox" value="48"> +48h</label>
-            <label class="step-item"><input type="checkbox" value="72"> +72h</label>
-        </div>
-        <button id="btn-scan" class="btn-warning" style="margin-top: 5px;">🔍 Scan automatique du fichier distant</button>
-
-        <h3>📊 2. Paramètres détectés :</h3>
-        <select id="param-list" multiple><option disabled>En attente du scan...</option></select>
-
-        <h3>📉 3. Profondeurs détectées :</h3>
-        <select id="level-list" multiple><option disabled>En attente du scan...</option></select>
-
-        <h3>💾 4. Zones Favorites :</h3>
-        <div style="display: flex; gap: 5px; width: 100%;">
-            <select id="fav-select" style="flex:1;">
-                <option value="">-- Choisir une zone --</option>
-                <option value='{"n":51,"s":43,"e":3,"w":-6}'>Manche / Bretagne</option>
-                <option value='{"n":48,"s":43,"e":-1,"w":-10}'>Golfe de Gascogne</option>
-                <option value='{"n":44,"s":35,"e":20,"w":-5}'>Méditerranée Ouest</option>
-            </select>
-            <button id="btn-load-fav" class="btn-success">📂 OK</button>
-        </div>
-        
-        <h3>🌐 5. Zone de sélection :</h3>
-        <div id="coords-display" class="coords">Aucune zone tracée.</div>
-        
-        <div id="progress-container" class="progress-box">
-            <span style="font-size:11px; color:#34d399;" id="progress-text">Traitement...</span>
-            <progress id="progress-bar" value="0" max="100"></progress>
-        </div>
-        
-        <button id="btn-crop" disabled style="padding:14px; font-size:14px; margin-top: 5px;">🚀 Extraire & Télécharger</button>
-    </div>
-
-    <div id="map-container">
-        <canvas id="map-background"></canvas>
-        <canvas id="grid-canvas"></canvas>
-        <div id="selection-box" class="leaflet-zoom-box" style="display:none;"></div>
-    </div>
-    <script>
-        const canvas = document.getElementById('grid-canvas'); const ctx = canvas.getContext('2d');
-        const mapCanvas = document.getElementById('map-background'); const mctx = mapCanvas.getContext('2d');
-        const box = document.getElementById('selection-box'); const display = document.getElementById('coords-display');
-
-        let isDrawing = false; let startX, startY, endX, endY; window.currentBounds = null;
-
-        function pixelToCoords(x, y) {
-            let lon = ((x / canvas.width) * 360) - 180;
-            let lat = 90 - ((y / canvas.height) * 180);
-            return { lat: parseFloat(lat.toFixed(2)), lon: parseFloat(lon.toFixed(2)) };
-        }
-        function toX(lon) { return ((lon + 180) / 360) * mapCanvas.width; }
-        function toY(lat) { return ((90 - lat) / 180) * mapCanvas.height; }
-
-        function resizeCanvas() {
-            canvas.width = window.innerWidth - 420; canvas.height = window.innerHeight;
-            mapCanvas.width = window.innerWidth - 420; mapCanvas.height = window.innerHeight;
-            drawWorldMap(); drawBackgroundGrid();
-        }
-
-        function drawShape(poly) {
-            if (!poly || poly.length < 2) return;
-            try {
-                mctx.beginPath(); mctx.moveTo(toX(poly[0]), toY(poly[0]));
-                for (let i = 1; i < poly.length; i++) mctx.lineTo(toX(poly[i]), toY(poly[i]));
-                mctx.closePath(); mctx.fill(); mctx.stroke();
-            } catch(e) {}
-        }
-        function drawWorldMap() {
-            mctx.fillStyle = '#0b0f19'; mctx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
-            mctx.fillStyle = '#1e293b'; mctx.strokeStyle = '#334155'; mctx.lineWidth = 1.2;
-            drawShape([[-5.1,48.4],[-4.7,48.5],[-3.0,48.6],[-1.5,49.3],[-1.7,49.6],[-0.5,49.3],[1.3,50.1],[2.5,51.1],[4.5,51.4],[6.1,53.5],[8.5,54.5],[10.9,55.9],[14.2,54.2],[12.2,52.8],[6.1,51.1],[3.2,43.5],[4.8,43.3],[7.2,43.7],[9.2,44.2],[12.3,44.3],[13.6,45.7],[12.2,41.9],[15.0,38.2],[12.3,37.3],[14.1,40.7],[10.5,43.8],[7.4,43.4],[5.2,43.1],[3.1,41.9],[-1.4,43.4],[-1.2,44.6],[-2.2,47.2],[-5.1,48.4]]);
-            drawShape([[-1.4,43.4],[-3.7,43.4],[-9.0,43.0],[-9.5,42.3],[-8.9,38.5],[-9.3,37.0],[-5.3,36.1],[-1.0,36.8],[2.3,41.5],[3.1,41.9]]);
-            drawShape([[-5.0,50.1],[-6.0,50.5],[-5.3,52.1],[-4.9,54.1],[-6.4,56.5],[-7.2,58.3],[-4.1,57.6],[-1.9,57.1],[-1.8,55.5],[1.3,51.3],[-1.1,50.6],[-5.0,50.1]]);
-            drawShape([[-10.0,52.1],[-10.0,53.5],[-6.9,55.2],[-6.0,54.0],[-8.5,51.6],[-10.0,52.1]]);
-            drawShape([[8.7,42.6],[9.5,42.6],[9.4,41.4],[8.7,41.6]]); drawShape([[8.4,41.2],[9.7,40.9],[9.6,39.2],[8.4,38.9],[7.9,40.2]]);
-            drawShape([[-5.3,36.1],[5.0,36.8],[11.0,36.9],[15.0,32.3],[25.0,31.6],[34.0,29.6],[39.0,-4.0],[26.2,-34.1],[18.3,-34.4],[11.8,-12.3],[-14.5,14.5],[-17.3,17.2],[-17.0,21.3],[-13.1,32.3],[-6.1,35.9],[-5.3,36.1]]);
-            drawShape([[-160,70],[-120,68],[-100,75],[-80,62],[-60,50],[-52,47],[-74,40],[-80,25],[-97,25],[-115,30],[-140,60]]);
-            drawShape([[-75,12],[-70,10],[-50,-5],[-35,-5],[-42,-23],[-65,-50],[-75,-50],[-72,-15],[-80,-2],[-75,12]]);
-            drawShape([[14.2,54.2],[30.0,60.0],[60.0,65.0],[90.0,70.0],[120.0,72.0],[160.0,70.0],[170.0,60.0],[140.0,35.0],[120.0,25.0],[105.0,15.0],[90.0,10.0],[75.0,12.0],[60.0,25.0],[45.0,15.0],[34.0,29.6],[25.0,31.6],[15.0,32.3],[11.0,36.9],[14.2,54.2]]);
-            drawShape([[113,-25],[115,-33],[130,-32],[140,-37],[150,-34],[152,-25],[143,-15],[136,-12],[130,-12],[120,-15],[113,-25]]);
-            drawShape([[145,-41],[148,-41],[147,-43],[144,-43]]);
-        }
-
-        function drawBackgroundGrid() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)'; ctx.lineWidth = 0.5;
-            ctx.fillStyle = 'rgba(148, 163, 184, 0.6)'; ctx.font = '10px monospace';
-            for(let lon=-180; lon<=180; lon+=30) {
-                let x = toX(lon); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-                ctx.fillText(lon + '°', x + 4, canvas.height - 10);
-            }
-            for(let lat=-90; lat<=90; lat+=20) {
-                let y = toY(lat); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-                ctx.fillText(lat + '°', 10, y - 4);
-            }
-            ctx.strokeStyle = 'rgba(14, 165, 233, 0.45)'; ctx.lineWidth = 1.2;
-            ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width, canvas.height/2); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
-        }
-
-        function drawSelectionBox() {
-            drawBackgroundGrid(); if (!isDrawing) return;
-            ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
-            let x = Math.min(startX, endX); let y = Math.min(startY, endY);
-            let w = Math.abs(startX - endX); let h = Math.abs(startY - endY);
-            ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
-        }
-
-        window.addEventListener('resize', resizeCanvas); setTimeout(resizeCanvas, 100);
-                canvas.addEventListener('mousedown', function(e) {
-            if (!e.shiftKey) return; isDrawing = true;
-            const rect = canvas.getBoundingClientRect();
-            startX = e.clientX - rect.left; startY = e.clientY - rect.top; endX = startX; endY = startY;
-        });
-
-        canvas.addEventListener('mousemove', function(e) {
-            if (!isDrawing) return;
-            const rect = canvas.getBoundingClientRect();
-            endX = e.clientX - rect.left; endY = e.clientY - rect.top;
-            drawSelectionBox();
-            let sC = pixelToCoords(startX, startY); let eC = pixelToCoords(endX, endY);
-            window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
-            display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
-            checkReady();
-        });
-
-        canvas.addEventListener('mouseup', function() { if (isDrawing) isDrawing = false; });
-
-        document.getElementById('btn-load-fav').onclick = function() {
-            const val = document.getElementById('fav-select').value; if(!val) return;
-            window.currentBounds = JSON.parse(val);
-            display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
-            startX = toX(window.currentBounds.w); startY = toY(window.currentBounds.n);
-            endX = toX(window.currentBounds.e); endY = toY(window.currentBounds.s);
-            isDrawing = true; drawSelectionBox(); isDrawing = false; checkReady();
-        };
-
-        // CORRECTION DE L'URL AVEC LE PRÉFIXE /CEP POUR L'ANALYSE DYNAMIQUE
-        document.getElementById('btn-scan').onclick = function() {
-            const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
-            const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
-            const mode = document.getElementById('mode-select').value;
+    <div class="row g-4">
+        <!-- Colonne de Gauche : Cartographie -->
+        <div class="col-xl-7 col-lg-6">
+            <div class="card p-3 mb-3">
+                <h5 class="card-title text-info fw-bold mb-3">1. Délimitation de la Zone de Routage</h5>
+                <div id="map"></div>
+                <div class="row g-2 mt-2 text-center text-monospace small">
+                    <div class="col-3"><span class="badge bg-secondary">Nord : <span id="lbl-n">45.00</span>°</span></div>
+                    <div class="col-3"><span class="badge bg-secondary">Sud : <span id="lbl-s">40.00</span>°</span></div>
+                    <div class="col-3"><span class="badge bg-secondary">Ouest : <span id="lbl-w">-5.00</span>°</span></div>
+                    <div class="col-3"><span class="badge bg-secondary">Est : <span id="lbl-e">5.00</span>°</span></div>
+                </div>
+            </div>
             
-            if(selectedSteps.length === 0) { alert("⚠️ Cochez au moins une échéance."); return; }
-            
-            document.getElementById('status').innerText = "⏳ Analyse du catalogue en cours...";
-            document.getElementById('btn-scan').disabled = true;
+            <!-- Bloc Console de Nettoyage et Téléchargement -->
+            <div class="card p-3">
+                <button class="btn btn-sm btn-outline-danger w-100" id="btn-clean" onclick="cleanStorage()">🧹 Vider le cache du stockage Cloud</button>
+            </div>
+        </div>
 
-            fetch('/cep/api/scan_ecmwf', {
+        <!-- Colonne de Droite : Paramétrage Météo -->
+        <div class="col-xl-5 col-lg-6">
+            <div class="card p-3 mb-3">
+                <h5 class="card-title text-info fw-bold mb-3">2. Type de Modèle & Niveau</h5>
+                <div class="btn-group w-100 mb-3" role="group">
+                    <input type="radio" class="btn-check" name="levtype" id="mode-sfc" value="sfc" checked onclick="toggleLevType('sfc')">
+                    <label class="btn btn-outline-primary" for="mode-sfc">🌊 Mode Surface (sfc)</label>
+                    
+                    <input type="radio" class="btn-check" name="levtype" id="mode-pl" value="pl" onclick="toggleLevType('pl')">
+                    <label class="btn btn-outline-primary" for="mode-pl">☁️ Mode Altitude Isobare (pl)</label>
+                </div>
+
+                <!-- CASE À COCHER : SÉLECTEUR DE RUN MANUEL -->
+                <div class="form-check form-switch p-3 my-2 border border-warning rounded" style="background: rgba(255,193,7,0.05);">
+                    <input class="form-check-input" type="checkbox" id="useFallbackRun">
+                    <label class="form-check-label fw-bold text-warning" for="useFallbackRun">
+                        ⚠️ Activer le Run de secours (12Z de la veille)
+                    </label>
+                    <div class="form-text text-muted small">Cochez cette case uniquement si le scan du Run 00Z du jour renvoie une erreur 404 (avant 07h30 UTC).</div>
+                </div>
+            </div>
+
+            <div class="card p-3 mb-3">
+                <h5 class="card-title text-info fw-bold mb-3">3. Échéances de Prévision (Pas de 12h)</h5>
+                <div class="step-box mb-3" id="step-container">
+                    <!-- Génération dynamique des pas temporels -->
+                    <script>
+                        const container = document.getElementById('step-container');
+                        for(let h=0; h<=120; h+=12) {
+                            container.innerHTML += `<div class="step-item" data-step="${h}" onclick="toggleStep(this)">+${h}h</div>`;
+                        }
+                    </script>
+                </div>
+                <button class="btn btn-warning fw-bold text-dark w-100" id="btn-scan" onclick="scanModelCatalog()">🔍 1. Interroger & Scanner le Catalogue</button>
+            </div>
+
+            <!-- Listes chargées dynamiquement après le scan réussi -->
+            <div class="card p-3 mb-3 d-none" id="dynamic-filters-box">
+                <h5 class="card-title text-success fw-bold mb-3">4. Filtrage Fin des Variables Diagnostiquées</h5>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Champs physiques disponibles :</label>
+                    <div id="params-checkboxes" class="border border-secondary p-2 rounded" style="max-height: 180px; overflow-y: auto;"></div>
+                </div>
+                <div class="mb-3 id="levels-wrapper">
+                    <label class="form-label fw-bold">Niveaux de hauteur disponibles :</label>
+                    <div id="levels-checkboxes" class="border border-secondary p-2 rounded" style="max-height: 150px; overflow-y: auto;"></div>
+                </div>
+                
+                <button class="btn btn-success fw-bold w-100 btn-lg mb-2" id="btn-crop" onclick="executeFetchAndCrop()">⚡ 2. Lancer la Découpe Spatiale</button>
+                
+                <!-- JAUGE DE CHARGEMENT PROGRESSIVE -->
+                <div class="progress mt-3 d-none" id="progress-wrapper" style="height: 25px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-success fw-bold text-white" id="progress-bar" role="progressbar" style="width: 0%;">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Scripts requis pour Bootstrap et Leaflet -->
+<script src="https://jsdelivr.net"></script>
+<script src="https://unpkg.com"></script>
+<script>
+    // Configuration initiale de la carte Leaflet centrée sur l'Atlantique Nord / Europe
+    const map = L.map('map').setView([43.0, -2.0], 4);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    // Initialisation du rectangle de sélection éditable à la souris
+    let bounds = { n: 50.0, s: 35.0, w: -10.0, e: 8.0 };
+    const selectArea = L.rectangle([[bounds.s, bounds.w], [bounds.n, bounds.e]], {
+        color: "#0d6efd", weight: 2, fillColor: "#0d6efd", fillOpacity: 0.15, editable: true
+    }).addTo(map);
+    
+    // Événement à la fin du déplacement ou redimensionnement du rectangle
+    function updateBoundsDisplay() {
+        const b = selectArea.getBounds();
+        bounds = { n: b.getNorth().toFixed(2), s: b.getSouth().toFixed(2), w: b.getWest().toFixed(2), e: b.getEast().toFixed(2) };
+        document.getElementById('lbl-n').innerText = bounds.n;
+        document.getElementById('lbl-s').innerText = bounds.s;
+        document.getElementById('lbl-w').innerText = bounds.w;
+        document.getElementById('lbl-e').innerText = bounds.e;
+    }
+    selectArea.on('pm:update', updateBoundsDisplay); // Si plugin Leaflet.PM activé
+    map.on('moveend', function() {
+        // Option alternative simplifiée : se caler sur la vue de l'écran si pas d'édition
+        const b = map.getBounds();
+        bounds = { n: b.getNorth().toFixed(2), s: b.getSouth().toFixed(2), w: b.getWest().toFixed(2), e: b.getEast().toFixed(2) };
+        document.getElementById('lbl-n').innerText = bounds.n;
+        document.getElementById('lbl-s').innerText = bounds.s;
+        document.getElementById('lbl-w').innerText = bounds.w;
+        document.getElementById('lbl-e').innerText = bounds.e;
+    });
+
+    let currentLevType = 'sfc';
+    function toggleStep(element) { element.classList.toggle('active'); }
+    function toggleLevType(mode) { currentLevType = mode; }
+
+    function getSelectedSteps() {
+        return Array.from(document.querySelectorAll('.step-item.active')).map(el => parseInt(element = el.getAttribute('data-step')));
+    }
+
+    // FONCTION 1 : INTERROGATION ET SCAN DU CATALOGUE REEL
+    async function scanModelCatalog() {
+        const steps = getSelectedSteps();
+        const useFallback = document.getElementById('useFallbackRun').checked; // CAPTURE DE LA CASE À COCHER
+        
+        if(steps.length === 0) { alert("Cochez au moins une échéance temporelle."); return; }
+        
+        const btn = document.getElementById('btn-scan');
+        btn.disabled = true; btn.innerText = "🔍 Analyse binaire du catalogue en cours...";
+
+        try {
+            const resp = await fetch('/api/scan_ecmwf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ steps: selectedSteps, levtype: mode })
-            })
-            .then(res => res.json()).then(data => {
-                document.getElementById('btn-scan').disabled = false;
-                if(data.error) { document.getElementById('status').innerText = "❌ " + data.error; }
-                else {
-                    document.getElementById('status').innerText = "✅ Scan réussi !";
-                    
-                    const pList = document.getElementById('param-list'); pList.innerHTML = "";
-                    data.params.forEach(p => { let o = document.createElement('option'); o.value = p; o.innerText = p; pList.appendChild(o); });
-                    
-                    const lList = document.getElementById('level-list'); lList.innerHTML = "";
-                    data.levels.forEach(l => { 
-                        let o = document.createElement('option'); o.value = l; 
-                        o.innerText = l === 0 ? "0 (Surface / Mer)" : `${l} hPa`; 
-                        lList.appendChild(o); 
-                    });
-                    checkReady();
-                }
-            }).catch(() => { document.getElementById('status').innerText = "❌ Erreur de liaison cloud."; document.getElementById('btn-scan').disabled = false; });
-        };
-
-        function checkReady() {
-            const pSelect = document.getElementById('param-list');
-            if (window.currentBounds && pSelect.options.length > 0 && pSelect.value !== "") {
-                document.getElementById('btn-crop').disabled = false;
-            }
-        }
-        document.getElementById('param-list').onchange = checkReady;
-        document.getElementById('level-list').onchange = checkReady;
-
-        // CORRECTION DE L'URL AVEC LE PRÉFIXE /CEP POUR L'EXTRACTION FINALE
-        document.getElementById('btn-crop').onclick = function() {
-            const selectedParams = Array.from(document.getElementById('param-list').selectedOptions).map(opt => opt.value);
-            const selectedLevels = Array.from(document.getElementById('level-list').selectedOptions).map(opt => opt.value);
-            const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
-            const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
-            const mode = document.getElementById('mode-select').value;
-
-            document.getElementById('progress-container').style.display = 'flex';
-            document.getElementById('btn-crop').disabled = true;
-            
-            let progressInterval = setInterval(function() {
-                fetch('/cep/api/progress').then(res => res.json()).then(data => {
-                    document.getElementById('progress-bar').value = data.progress;
-                    document.getElementById('progress-text').innerText = "Extraction cloud en cours : " + data.progress + "%";
-                });
-            }, 500);
-
-            fetch('/cep/api/fetch_and_crop', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps, levtype: mode })
-            })
-            .then(res => res.json()).then(data => {
-                clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
-                if (data.success) { 
-                    // CORRECTION ICI : Ajout du préfixe /cep pour télécharger au bon endroit
-                    window.location.href = "/cep" + data.download_url; 
-                } else { 
-                    alert("❌ " + data.error); 
-                }
+                body: JSON.stringify({ steps: steps, levtype: currentLevType, use_fallback: useFallback }) // ENVOI AU SERVEUR
             });
-        };
-    </script>
+            const res = await resp.json();
+            
+            if(!res.success) { alert("❌ Erreur : " + res.error); return; }
+
+            // Affichage et peuplement des filtres dynamiques reçus du serveur
+            document.getElementById('dynamic-filters-box').classList.remove('d-none');
+            
+            const pBox = document.getElementById('params-checkboxes'); pBox.innerHTML = "";
+            res.params.forEach(p => {
+                pBox.innerHTML += `<div class="form-check"><input class="form-check-input chk-p" type="checkbox" value="${p}" id="${p}" checked><label class="form-check-label" for="${p}">${p}</label></div>`;
+            });
+
+            const lBox = document.getElementById('levels-checkboxes'); lBox.innerHTML = "";
+            if(currentLevType === 'sfc') {
+                document.getElementById('levels-wrapper').classList.add('d-none');
+                lBox.innerHTML = `<input type="hidden" class="chk-l" value="0">`;
+            } else {
+                document.getElementById('levels-wrapper').classList.remove('d-none');
+                res.levels.forEach(l => {
+                    lBox.innerHTML += `<div class="form-check"><input class="chk-l form-check-input" type="checkbox" value="${l}" id="lv-${l}" checked><label class="form-check-label" for="lv-${l}">${l} hPa</label></div>`;
+                });
+            }
+        } catch(e) {
+            alert("Erreur de communication Cloud : " + e);
+        } finally {
+            btn.disabled = false; btn.innerText = "🔍 1. Interroger & Scanner le Catalogue";
+        }
+    }
+
+    // FONCTION 2 : PIPELINE DE DECOUPE ET COMPILATION DU GRIB FINALE
+    async function executeFetchAndCrop() {
+        const boundsData = bounds;
+        const steps = getSelectedSteps();
+        const useFallback = document.getElementById('useFallbackRun').checked; // CAPTURE DE LA CASE À COCHER
+        const pChecked = Array.from(document.querySelectorAll('.chk-p:checked')).map(el => el.value);
+        const lChecked = Array.from(document.querySelectorAll('.chk-l:checked')).map(el => el.value);
+
+        document.getElementById('progress-wrapper').classList.remove('d-none');
+        const pBar = document.getElementById('progress-bar');
+        pBar.style.width = "5%"; pBar.innerText = "5%";
+
+        // Démarrage du pooling de progression en temps réel
+        const interval = setInterval(async () => {
+            const r = await fetch('/api/progress');
+            const d = await r.json();
+            pBar.style.width = d.progress + "%"; pBar.innerText = d.progress + "%";
+        }, 1200);
+
+        try {
+            const resp = await fetch('/api/fetch_and_crop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bounds: boundsData, params: pChecked, levels: lChecked, steps: steps, levtype: currentLevType, use_fallback: useFallback // ENVOI COMPLET
+                })
+            });
+            clearInterval(interval);
+            const res = await resp.json();
+
+            if(!res.success) { pBar.classList.add('bg-danger'); pBar.innerText = "Échec"; alert("❌ " + res.error); return; }
+
+            pBar.style.width = "100%"; pBar.innerText = "✓ Fichier prêt !";
+            // Lancement du téléchargement binaire automatique dans le navigateur
+            window.location.href = res.download_url;
+        } catch(e) {
+            clearInterval(interval);
+            alert("Erreur réseau durant le découpage : " + e);
+        }
+    }
+
+    async function cleanStorage() {
+        const r = await fetch('/api/clean', { method: 'POST' });
+        const res = await r.json();
+        alert(res.message || res.error);
+    }
+</script>
 </body>
 </html>
-
