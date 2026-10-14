@@ -2,9 +2,6 @@ import sys
 import os
 import json
 import shutil
-import urllib.request
-import ssl
-from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
 from ecmwf.opendata import Client
 import pygrib
@@ -17,28 +14,6 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
-
-def check_cep_url_availability(step_val, levtype="sfc"):
-    """Vérifie par une requête HEAD si le run de 00Z du jour est physiquement en ligne sur l'ECMWF"""
-    try:
-        now = datetime.utcnow()
-        date_str = now.strftime("%Y%m%d")
-        
-        if step_val == 0:
-            step_str = "000.1"
-        else:
-            step_str = f"{step_val:03d}1"
-            
-        suffix = "pl" if levtype == "pl" else "sfc"
-        url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}-oper-{suffix}.grib2"
-        
-        ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url, method='HEAD')
-        req.add_header('User-Agent', 'Mozilla/5.0')
-        with urllib.request.urlopen(req, context=ctx, timeout=4):
-            return True
-    except Exception:
-        return False
 
 @app.route('/')
 def index():
@@ -60,10 +35,10 @@ def clean_server_dir():
 
 @app.route('/api/scan_ecmwf', methods=['POST'])
 def scan_ecmwf():
-    """Génère la liste des paramètres structurels du modèle européen"""
     data = request.json
     selected_steps = data.get("steps", [])
     levtype = data.get("levtype", "sfc")
+    use_fallback = data.get("use_fallback", False) # Case à cocher récupérée (True ou False)
 
     if not selected_steps:
         return jsonify({"error": "Veuillez cocher au moins une échéance."}), 400
@@ -79,11 +54,29 @@ def scan_ecmwf():
     try:
         client = Client(source="ecmwf")
         
-        # Test d'aiguillage sur le premier pas de temps numérique unique
-        if check_cep_url_availability(first_step, levtype):
-            client.retrieve(date=0, time="00", step=first_step, stream="oper", type="fc", levtype=levtype, target=scan_path)
+        # BLOC DE SCAN 1 : Configuration selon le choix utilisateur
+        if not use_fallback:
+            # Mode standard : Run de 00Z d'aujourd'hui
+            client.retrieve(
+                date=0,
+                time="00",
+                step=first_step,
+                stream="oper",
+                type="fc",
+                levtype=levtype,
+                target=scan_path
+            )
         else:
-            client.retrieve(date=-1, time="12", step=first_step, stream="oper", type="fc", levtype=levtype, target=scan_path)
+            # Mode secours manuel : Run de 12Z de la veille
+            client.retrieve(
+                date=-1,
+                time="12",
+                step=first_step,
+                stream="oper",
+                type="fc",
+                levtype=levtype,
+                target=scan_path
+            )
 
         fin = pygrib.open(scan_path)
         params_set = set()
@@ -113,7 +106,11 @@ def scan_ecmwf():
 
     except Exception as e:
         if os.path.exists(scan_path): os.remove(scan_path)
-        return jsonify({"error": f"Erreur d'accès via l'API officielle : {str(e)}"}), 500
+        # Message d'erreur explicite pour guider l'utilisateur vers la case à cocher
+        err_msg = str(e)
+        if "not found" in err_msg.lower() or "404" in err_msg:
+            err_msg = "Le run demandé n'est pas encore disponible. Cochez la case 'Run de secours 12Z' pour basculer sur la veille."
+        return jsonify({"error": err_msg}), 500
 
 @app.route('/api/fetch_and_crop', methods=['POST'])
 def fetch_and_crop():
@@ -125,23 +122,22 @@ def fetch_and_crop():
     selected_params_raw = data.get("params", [])
     selected_levels = [int(l) for l in data.get("levels", [])]
     levtype = data.get("levtype", "sfc")
-    
+    use_fallback = data.get("use_fallback", False) # Case à cocher récupérée
+
     requested_steps = [int(s) for s in data.get("steps", [])]
-    
+
+    # Injection conditionnelle de la ligne de départ à 00h
     if 12 in requested_steps and 0 not in requested_steps:
         requested_steps.append(0)
-        
-    selected_steps = sorted(list(set(requested_steps)))
 
-    if not selected_steps:
-        return jsonify({"error": "Aucune échéance sélectionnée."}), 400
+    selected_steps = sorted(list(set(requested_steps)))
 
     selected_params = []
     for p in selected_params_raw:
         if "(" in p and ")" in p:
-            selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
+            selected_params.append(p.split("(")[-1].replace(")", "").strip())
         else:
-            selected_params.append(p.strip().lower())
+            selected_params.append(p.strip())
 
     total_steps = len(selected_steps)
     output_filename = "crop_ecmwf.grib2"
@@ -149,11 +145,14 @@ def fetch_and_crop():
 
     if os.path.exists(output_path): os.remove(output_path)
 
+    # Inversion de sécurité : s'assurer que Nord > Sud pour pygrib.data
+    lat_n = max(float(bounds["n"]), float(bounds["s"]))
+    lat_s = min(float(bounds["n"]), float(bounds["s"]))
+    lon_w = float(bounds["w"])
+    lon_e = float(bounds["e"])
+
     try:
         client = Client(source="ecmwf")
-        
-        # CORRECTION : On passe le premier élément de la liste (l'entier) pour valider l'aiguillage du run
-        run_du_jour_dispo = check_cep_url_availability(selected_steps[0], levtype)
 
         with open(output_path, "wb") as fout:
             for step_index, step_val in enumerate(selected_steps):
@@ -163,11 +162,30 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
 
                 try:
-                    if run_du_jour_dispo:
-                        client.retrieve(date=0, time="00", step=step_val, stream="oper", type="fc", levtype=levtype, target=chunk_raw_path)
+                    # BLOC DE DECOUPE 2 : Routage strict selon l'état de la case à cocher
+                    if not use_fallback:
+                        # Bloc standard (00Z aujourd'hui)
+                        client.retrieve(
+                            date=0,
+                            time="00",
+                            step=step_val,
+                            stream="oper",
+                            type="fc",
+                            levtype=levtype,
+                            target=chunk_raw_path
+                        )
                     else:
+                        # Bloc de secours (12Z hier + recalcul de l'échéance)
                         step_ajuste = step_val + 12
-                        client.retrieve(date=-1, time="12", step=step_ajuste, stream="oper", type="fc", levtype=levtype, target=chunk_raw_path)
+                        client.retrieve(
+                            date=-1,
+                            time="12",
+                            step=step_ajuste,
+                            stream="oper",
+                            type="fc",
+                            levtype=levtype,
+                            target=chunk_raw_path
+                        )
 
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
@@ -175,35 +193,34 @@ def fetch_and_crop():
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
-                            short_name = str(getattr(grb, 'shortName', '')).lower()
+                            short_name = getattr(grb, 'shortName', '')
                             level = int(grb.level if hasattr(grb, 'level') else 0)
-                            lev_type = str(getattr(grb, 'typeOfLevel', '')).lower()
 
                             param_match = short_name in selected_params if selected_params else True
-                            
-                            if levtype == "sfc":
-                                level_match = "surface" in lev_type or "ground" in lev_type or level == 0
-                            else:
-                                # CORRECTION DU FILTRE ALIGNÉ SUR LE TERMINAL (isobaricinhpa)
-                                level_match = "isobaric" in lev_type and level in selected_levels
+                            level_match = level in selected_levels if selected_levels else True
 
                             if param_match and level_match:
-                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
+                                sub_data, lats, lons = grb.data(lat1=lat_s, lat2=lat_n, lon1=lon_w, lon2=lon_e)
                                 nj, ni = sub_data.shape
-                                
+
+                                # Inversion Nord->Sud pour assurer la compatibilité de lecture de qtVlm
+                                if lats[0, 0] < lats[-1, 0]:
+                                    sub_data = np.flipud(sub_data)
+
                                 msg_clone = pygrib.fromstring(grb.tostring())
                                 msg_clone.values = sub_data
                                 msg_clone['Ni'] = int(ni)
                                 msg_clone['Nj'] = int(nj)
-                                
-                                msg_clone['latitudeOfFirstGridPointInDegrees'] = float(bounds["n"])
-                                msg_clone['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
-                                msg_clone['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
-                                msg_clone['longitudeOfLastGridPointInDegrees'] = float(bounds["e"])
-                                
-                                if not run_du_jour_dispo:
+
+                                msg_clone['latitudeOfFirstGridPointInDegrees'] = float(lat_n)
+                                msg_clone['latitudeOfLastGridPointInDegrees'] = float(lat_s)
+                                msg_clone['longitudeOfFirstGridPointInDegrees'] = float(lon_w)
+                                msg_clone['longitudeOfLastGridPointInDegrees'] = float(lon_e)
+
+                                # Réalignement de l'échéance si run de secours
+                                if use_fallback:
                                     msg_clone['step'] = int(step_val)
-                                
+
                                 fout.write(msg_clone.tostring())
                         except Exception:
                             continue
