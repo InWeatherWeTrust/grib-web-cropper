@@ -55,7 +55,7 @@ def scan_ecmwf():
     try:
         client = Client(source="ecmwf")
         client.retrieve(
-            date=0, # CORRECTION : Scan sur le run d'AUJOURD'HUI
+            date=0,
             time="00",
             step=first_step,
             stream="oper",
@@ -131,7 +131,7 @@ def fetch_and_crop():
 
                 try:
                     client.retrieve(
-                        date=0, # CORRECTION : Téléchargement sur le run d'AUJOURD'HUI
+                        date=0,
                         time="00",
                         step=step_val,
                         stream="oper",
@@ -153,26 +153,31 @@ def fetch_and_crop():
                             level_match = level in selected_levels if selected_levels else True
 
                             if param_match and level_match:
-                                values = grb.values
-                                lats, lons = grb.latlons()
+                                # 1. Extraction des pixels et des matrices géographiques de la zone cible
+                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 
-                                # Ajustement rigoureux des coordonnées pour la conformité XyGrib
-                                lons_adjusted = np.where(lons > 180, lons - 360, lons)
+                                # Calcule le nombre de lignes (Nj) et de colonnes (Ni) de votre rectangle
+                                nj, ni = sub_data.shape
                                 
-                                inside_zone = (
-                                    (lats >= bounds["s"]) & (lats <= bounds["n"]) &
-                                    (lons_adjusted >= bounds["w"]) & (lons_adjusted <= bounds["e"])
-                                )
+                                # 2. RECONSTRUCTION BIJECTIVE DU MESSAGE (La méthode officielle ECMWF/pygrib)
+                                # On clone le squelette du message d'origine pour conserver les clés physiques (vent, pression, unité)
+                                msg_clone = pygrib.fromstring(grb.tostring())
                                 
-                                masked_values = np.ma.masked_array(values, mask=~inside_zone)
-                                grb.values = masked_values
+                                # On écrase la structure spatiale globale par les dimensions géométriques de la sous-grille
+                                msg_clone.values = sub_data
+                                msg_clone['Ni'] = int(ni)
+                                msg_clone['Nj'] = int(nj)
                                 
-                                # BI-COMPATIBILITE : On bascule l'en-tête de la grille au format Ouest/Est (-180 à 180)
-                                grb['longitudeOfFirstGridPointInDegrees'] = -180.0
-                                grb['longitudeOfLastGridPointInDegrees'] = 179.75
+                                # Injection des coordonnées géographiques réelles de vos frontières de routage
+                                msg_clone['latitudeOfFirstGridPointInDegrees'] = float(bounds["n"])
+                                msg_clone['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
+                                msg_clone['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
+                                msg_clone['longitudeOfLastGridPointInDegrees'] = float(bounds["e"])
                                 
-                                fout.write(grb.tostring())
-                        except Exception:
+                                # Écriture du message GRIB réindexé de manière transparente
+                                fout.write(msg_clone.tostring())
+                        except Exception as msg_err:
+                            print(f"Saut de message : {msg_err}")
                             continue
                     fin.close()
                 finally:
