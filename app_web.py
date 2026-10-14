@@ -19,7 +19,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def check_cep_url_availability(step_val, levtype="sfc"):
-    """Vérifie par une requête HEAD ultra-rapide si le run de 00Z du jour est disponible sur l'ECMWF"""
+    """Vérifie par une requête HEAD si le run de 00Z du jour est physiquement en ligne sur l'ECMWF"""
     try:
         now = datetime.utcnow()
         date_str = now.strftime("%Y%m%d")
@@ -60,6 +60,7 @@ def clean_server_dir():
 
 @app.route('/api/scan_ecmwf', methods=['POST'])
 def scan_ecmwf():
+    """Génère la liste des paramètres structurels du modèle européen"""
     data = request.json
     selected_steps = data.get("steps", [])
     levtype = data.get("levtype", "sfc")
@@ -78,6 +79,7 @@ def scan_ecmwf():
     try:
         client = Client(source="ecmwf")
         
+        # Test d'aiguillage sur le premier pas de temps numérique unique
         if check_cep_url_availability(first_step, levtype):
             client.retrieve(date=0, time="00", step=first_step, stream="oper", type="fc", levtype=levtype, target=scan_path)
         else:
@@ -137,9 +139,9 @@ def fetch_and_crop():
     selected_params = []
     for p in selected_params_raw:
         if "(" in p and ")" in p:
-            selected_params.append(p.split("(")[-1].replace(")", "").strip())
+            selected_params.append(p.split("(")[-1].replace(")", "").strip().lower())
         else:
-            selected_params.append(p.strip())
+            selected_params.append(p.strip().lower())
 
     total_steps = len(selected_steps)
     output_filename = "crop_ecmwf.grib2"
@@ -150,7 +152,7 @@ def fetch_and_crop():
     try:
         client = Client(source="ecmwf")
         
-        # Sécurité d'indexation pour la détection du run
+        # CORRECTION : On passe le premier élément de la liste (l'entier) pour valider l'aiguillage du run
         run_du_jour_dispo = check_cep_url_availability(selected_steps[0], levtype)
 
         with open(output_path, "wb") as fout:
@@ -173,11 +175,17 @@ def fetch_and_crop():
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
-                            short_name = getattr(grb, 'shortName', '')
+                            short_name = str(getattr(grb, 'shortName', '')).lower()
                             level = int(grb.level if hasattr(grb, 'level') else 0)
+                            lev_type = str(getattr(grb, 'typeOfLevel', '')).lower()
 
                             param_match = short_name in selected_params if selected_params else True
-                            level_match = level in selected_levels if selected_levels else True
+                            
+                            if levtype == "sfc":
+                                level_match = "surface" in lev_type or "ground" in lev_type or level == 0
+                            else:
+                                # CORRECTION DU FILTRE ALIGNÉ SUR LE TERMINAL (isobaricinhpa)
+                                level_match = "isobaric" in lev_type and level in selected_levels
 
                             if param_match and level_match:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
