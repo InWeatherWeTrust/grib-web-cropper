@@ -2,9 +2,12 @@ import sys
 import os
 import json
 import shutil
+import urllib.request
+import ssl
 from flask import Flask, render_template, request, jsonify, send_file
 from ecmwf.opendata import Client
 import pygrib
+import numpy as np
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
@@ -150,19 +153,26 @@ def fetch_and_crop():
                             level_match = level in selected_levels if selected_levels else True
 
                             if param_match and level_match:
-                                # 1. Extraction géographique de la zone cible (sous-matrice 2D)
-                                sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
+                                # 1. Lecture de la matrice globale originale
+                                values = grb.values
+                                lats, lons = grb.latlons()
                                 
-                                # 2. RECONSTRUCTION GÉOMÉTRIQUE STRICTE 2D (Correction qtVlm & XyGrib)
-                                # Assigner le tableau sous sa forme native bidimensionnelle force pygrib 
-                                # à réécrire AUTOMATIQUEMENT les clés d'en-tête géométriques de la grille (Ni et Nj)
-                                grb.values = sub_data
+                                # Bascule des longitudes (0/360) vers le format standard (-180/180)
+                                lons_adjusted = np.where(lons > 180, lons - 360, lons)
                                 
-                                # 3. Réécriture réglementaire des coordonnées limites du rectangle découpé
-                                grb['latitudeOfFirstGridPointInDegrees'] = float(bounds["n"])
-                                grb['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
-                                grb['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
-                                grb['longitudeOfLastGridPointInDegrees'] = float(bounds["e"])
+                                # 2. Création du masque binaire sur vos coordonnées cardinales
+                                inside_zone = (
+                                    (lats >= bounds["s"]) & (lats <= bounds["n"]) &
+                                    (lons_adjusted >= bounds["w"]) & (lons_adjusted <= bounds["e"])
+                                )
+                                
+                                # 3. REPRÉSENTATION PHYSIQUE CORRIGÉE :
+                                # On utilise un tableau masqué NumPy (MaskedArray).
+                                # Les points à l'extérieur (not inside_zone) sont marqués comme invalides/masqués.
+                                # À l'écriture, pygrib va automatiquement générer un 'Bitmap' binaire officiel GRIB2
+                                # indiquant aux logiciels que ces zones sont vides (Donnée absente).
+                                masked_values = np.ma.masked_array(values, mask=~inside_zone)
+                                grb.values = masked_values
                                 
                                 fout.write(grb.tostring())
                         except Exception:
