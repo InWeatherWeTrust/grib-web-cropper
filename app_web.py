@@ -17,6 +17,21 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
+def get_cep_url(step_val, levtype="sfc"):
+    """Calcule l'URL haute disponibilité du CEP Open Data sur AWS"""
+    now = datetime.utcnow()
+    date_str = now.strftime("%Y%m%d")
+    
+    if step_val == 0:
+        step_str = "000.1"
+    else:
+        step_str = f"{step_val:03d}1"
+    
+    if levtype == "pl":
+        return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}-oper-pl.grib2"
+    else:
+        return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}-oper-sfc.grib2"
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -45,7 +60,7 @@ def scan_ecmwf():
         return jsonify({"error": "Veuillez cocher au moins une échéance."}), 400
 
     steps_ints = sorted([int(s) for s in selected_steps])
-    first_step = steps_ints[0]
+    first_step = steps_ints
 
     scan_filename = f"scan_step_{first_step}.grib2"
     scan_path = os.path.join(UPLOAD_FOLDER, scan_filename)
@@ -103,10 +118,11 @@ def fetch_and_crop():
     bounds = data.get("bounds")
     selected_params_raw = data.get("params", [])
     selected_levels = [int(l) for l in data.get("levels", [])]
+    levtype = data.get("levtype", "sfc") # Récupération de levtype placée AVANT son utilisation
     
     requested_steps = [int(s) for s in data.get("steps", [])]
     
-    # CORRECTION CHIRURGICALE : On injecte 00h UNIQUE-MENT si l'utilisateur commence à 12h
+    # Injection conditionnelle et chirurgicale de l'échéance 00h
     if 12 in requested_steps and 0 not in requested_steps:
         requested_steps.append(0)
         
@@ -142,7 +158,7 @@ def fetch_and_crop():
                         step=step_val,
                         stream="oper",
                         type="fc",
-                        levtype=levtype,
+                        levtype=levtype, # Désormais parfaitement défini
                         target=chunk_raw_path
                     )
 
