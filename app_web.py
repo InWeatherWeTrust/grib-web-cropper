@@ -4,6 +4,7 @@ import json
 import shutil
 import urllib.request
 import ssl
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, send_file
 from ecmwf.opendata import Client
 import pygrib
@@ -17,20 +18,23 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 PROGRESS = 0
 
-def get_cep_url(step_val, levtype="sfc"):
-    """Calcule l'URL haute disponibilité du CEP Open Data sur AWS"""
+def check_cep_url_availability(step_val, levtype="sfc"):
+    """Vérifie par une requête HEAD ultra-rapide si le run de 00Z du jour est disponible sur l'ECMWF"""
     now = datetime.utcnow()
     date_str = now.strftime("%Y%m%d")
+    step_str = "000.1" if step_val == 0 else f"{step_val:03d}1"
+    suffix = "pl" if levtype == "pl" else "sfc"
     
-    if step_val == 0:
-        step_str = "000.1"
-    else:
-        step_str = f"{step_val:03d}1"
+    url = f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}-oper-{suffix}.grib2"
     
-    if levtype == "pl":
-        return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}-oper-pl.grib2"
-    else:
-        return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}-oper-sfc.grib2"
+    ctx = ssl._create_unverified_context()
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        with urllib.request.urlopen(req, context=ctx, timeout=3):
+            return True
+    except Exception:
+        return False
 
 @app.route('/')
 def index():
@@ -60,7 +64,7 @@ def scan_ecmwf():
         return jsonify({"error": "Veuillez cocher au moins une échéance."}), 400
 
     steps_ints = sorted([int(s) for s in selected_steps])
-    first_step = steps_ints
+    first_step = steps_ints[0]
 
     scan_filename = f"scan_step_{first_step}.grib2"
     scan_path = os.path.join(UPLOAD_FOLDER, scan_filename)
@@ -69,15 +73,14 @@ def scan_ecmwf():
 
     try:
         client = Client(source="ecmwf")
-        client.retrieve(
-            date=0,
-            time="00",
-            step=first_step,
-            stream="oper",
-            type="fc",
-            levtype=levtype,
-            target=scan_path
-        )
+        
+        # AIGUILLAGE DU SCAN INITIAL
+        if check_cep_url_availability(first_step, levtype):
+            # Option A : Le run de 00Z d'aujourd'hui est sorti
+            client.retrieve(date=0, time="00", step=first_step, stream="oper", type="fc", levtype=levtype, target=scan_path)
+        else:
+            # Option B : On se replie sur le run de 12Z de la veille
+            client.retrieve(date=-1, time="12", step=first_step, stream="oper", type="fc", levtype=levtype, target=scan_path)
 
         fin = pygrib.open(scan_path)
         params_set = set()
@@ -118,11 +121,11 @@ def fetch_and_crop():
     bounds = data.get("bounds")
     selected_params_raw = data.get("params", [])
     selected_levels = [int(l) for l in data.get("levels", [])]
-    levtype = data.get("levtype", "sfc") # Récupération de levtype placée AVANT son utilisation
+    levtype = data.get("levtype", "sfc")
     
     requested_steps = [int(s) for s in data.get("steps", [])]
     
-    # Injection conditionnelle et chirurgicale de l'échéance 00h
+    # Injection conditionnelle de l'échéance 00h si on démarre à 12h
     if 12 in requested_steps and 0 not in requested_steps:
         requested_steps.append(0)
         
@@ -144,6 +147,9 @@ def fetch_and_crop():
     try:
         client = Client(source="ecmwf")
 
+        # ÉTAPE D'ANALYSE COMMUNE DU PREMIER PAS DISPONIBLE POUR DETERMINER LE RUN CIBLE
+        run_du_jour_dispo = check_cep_url_availability(selected_steps[0], levtype)
+
         with open(output_path, "wb") as fout:
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
@@ -152,15 +158,14 @@ def fetch_and_crop():
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
 
                 try:
-                    client.retrieve(
-                        date=0,
-                        time="00",
-                        step=step_val,
-                        stream="oper",
-                        type="fc",
-                        levtype=levtype, # Désormais parfaitement défini
-                        target=chunk_raw_path
-                    )
+                    # CONFIGURATION STRATÉGIQUE AUTOMATIQUE DES TARGETS API
+                    if run_du_jour_dispo:
+                        # Stratégie Standard (00Z aujourd'hui)
+                        client.retrieve(date=0, time="00", step=step_val, stream="oper", type="fc", levtype=levtype, target=chunk_raw_path)
+                    else:
+                        # Stratégie de Secours (12Z hier + Recalcul transparent de l'échéance binaire)
+                        step_ajuste = step_val + 12
+                        client.retrieve(date=-1, time="12", step=step_ajuste, stream="oper", type="fc", levtype=levtype, target=chunk_raw_path)
 
                     if not os.path.exists(chunk_raw_path) or os.path.getsize(chunk_raw_path) == 0:
                         continue
@@ -187,6 +192,11 @@ def fetch_and_crop():
                                 msg_clone['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
                                 msg_clone['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
                                 msg_clone['longitudeOfLastGridPointInDegrees'] = float(bounds["e"])
+                                
+                                # Si nous avons dû reculer sur le run d'hier, on réécrit l'échéance interne du message 
+                                # pour que qtVlm l'aligne correctement à l'écran sans créer de confusion chronologique
+                                if not run_du_jour_dispo:
+                                    msg_clone['step'] = int(step_val)
                                 
                                 fout.write(msg_clone.tostring())
                         except Exception:
