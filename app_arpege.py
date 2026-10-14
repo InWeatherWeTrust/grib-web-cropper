@@ -32,7 +32,7 @@ def check_url_availability(url):
         return False
 
 def get_arpege_routing_strategy(step_val, levtype="sfc"):
-    """Aiguilleur temporel intelligent : bascule de run et gestion du pas tri-horaire"""
+    """Aiguilleur temporel intelligent : bascule de run automatique et gestion de la date"""
     ecmwf_static_ip = "136.156.129.245"
     suffix = "pl" if levtype == "pl" else "fc"
     step_str = f"{step_val:03d}"
@@ -41,13 +41,15 @@ def get_arpege_routing_strategy(step_val, levtype="sfc"):
     today_str = datetime.utcnow().strftime("%Y%m%d")
     url_today = f"https://{ecmwf_static_ip}/forecasts/{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_str}h-oper-{suffix}.grib2"
     if check_url_availability(url_today):
+        print(f"🎯 [STRATÉGIE A] Utilisation du run 00Z d'aujourd'hui ({today_str})")
         return url_today
         
-    # 2. Stratégie B : Repli automatique sur 12Z d'hier avec décalage de +12h
+    # 2. Stratégie B : Repli automatique sur 12Z d'hier avec décalage temporel de +12h
     yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
     adjusted_step = step_val + 12
     adjusted_str = f"{adjusted_step:03d}"
-    return f"https://{ecmwf_static_ip}/forecasts/{yesterday_str}/12z/arpege/0p25/oper/{yesterday_str1200}-{adjusted_str}h-oper-{suffix}.grib2"
+    print(f"⚠️ [STRATÉGIE B] Run du jour absent. Bascule automatique sur 12Z d'hier ({yesterday_str})")
+    return f"https://{ecmwf_static_ip}/forecasts/{yesterday_str}/12z/arpege/0p25/oper/{yesterday_str}1200-{adjusted_str}h-oper-{suffix}.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -106,9 +108,9 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            parts = str(l).strip().split()
-            if parts and parts[0].isdigit():
-                selected_levels.append(int(parts[0]))
+            parts = str(l).strip().split()[0]
+            if parts and parts.isdigit():
+                selected_levels.append(int(parts))
         except:
             continue
     if levtype == "sfc":
@@ -126,7 +128,9 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url = get_ecmwf_arpege_url(step_val, levtype)
+                # CORRECTION ICI : Utilisation de l'aiguilleur stratégique à la place de l'ancienne fonction manquante
+                url = get_arpege_routing_strategy(step_val, levtype)
+                
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
@@ -171,7 +175,7 @@ def fetch_and_crop():
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez la parution temporelle."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez la parution temporelle des fichiers."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
