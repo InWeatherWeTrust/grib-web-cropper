@@ -108,11 +108,14 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            parts = str(l).strip().split()[0]
-            if parts and parts.isdigit():
-                selected_levels.append(int(parts))
-        except:
+            # CORRECTION DE SYNTAXE : Extraction rigoureuse du premier élément textuel de la liste scindée
+            parts = str(l).strip().split()
+            if parts and parts[0].isdigit():
+                selected_levels.append(int(parts[0]))
+        except Exception as e:
+            print(f"Erreur conversion niveau {l} : {e}")
             continue
+            
     if levtype == "sfc":
         selected_levels.append(0)
         
@@ -128,9 +131,7 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                # CORRECTION ICI : Utilisation de l'aiguilleur stratégique à la place de l'ancienne fonction manquante
                 url = get_arpege_routing_strategy(step_val, levtype)
-                
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
