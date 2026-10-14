@@ -43,12 +43,12 @@ def get_arpege_aws_strategy(step_val, levtype="sfc"):
         print(f"🎯 AWS Météo-France: Run 00Z du jour disponible ({today_str})")
         return url_today
         
-    # 2. TENTATIVE B : Repli sur le run 12Z d'hier avec décalage de +12h (CORRIGÉ)
+    # 2. TENTATIVE B : Repli sur le run 12Z d'hier avec décalage de +12h (Concaténation corrigée)
     yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
     adjusted_step = step_val + 12
     adjusted_str = f"{adjusted_step:02d}h"
     print(f"⚠️ AWS Météo-France: Bascule sur run 12Z d'hier ({yesterday_str})")
-    return f"https://meteofrance.fr_{yesterday_str}1200_{adjusted_str}_{suffix}.grib2"
+    return f"https://meteofrance.fr_" + yesterday_str + f"1200_{adjusted_str}_{suffix}.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -102,13 +102,13 @@ def fetch_and_crop():
     # Extraction propre des codes courts (ex: u, v, msl)
     selected_params = [p.split("(")[-1].replace(")", "").strip().lower() for p in selected_params_raw if "(" in p]
     
+    # Nettoyage robuste des niveaux en isolant le premier mot de la liste scindée
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # CORRECTION DE L'INDEXATION DE LISTE PYTHON
-            val_txt = str(l).strip().split()
-            if val_txt and val_txt[0].isdigit():
-                selected_levels.append(int(val_txt[0]))
+            parts = str(l).strip().split()
+            if parts and parts[0].isdigit():
+                selected_levels.append(int(parts[0]))
         except Exception as e:
             print(f"Erreur décodage niveau {l}: {e}")
             continue
