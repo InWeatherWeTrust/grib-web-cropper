@@ -43,7 +43,7 @@ def get_arpege_aws_strategy(step_val, levtype="sfc"):
         print(f"🎯 AWS Météo-France: Run 00Z du jour disponible ({today_str})")
         return url_today
         
-    # 2. TENTATIVE B : Repli sur le run 12Z d'hier avec décalage de +12h
+    # 2. TENTATIVE B : Repli sur le run 12Z d'hier avec décalage de +12h (CORRIGÉ)
     yesterday_str = (now - timedelta(days=1)).strftime("%Y%m%d")
     adjusted_step = step_val + 12
     adjusted_str = f"{adjusted_step:02d}h"
@@ -105,7 +105,7 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # CORRECTION LOGIQUE : Isolement précis du premier mot pour conversion numérique
+            # CORRECTION DE L'INDEXATION DE LISTE PYTHON
             val_txt = str(l).strip().split()
             if val_txt and val_txt[0].isdigit():
                 selected_levels.append(int(val_txt[0]))
