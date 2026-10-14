@@ -3,240 +3,225 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hub Météo Central - Découpeur GRIB GFS/CEP</title>
-    <!-- Bootstrap CSS pour un design propre -->
+    <title>GRIB Cloud Cropper - Multi-Mode Edition</title>
     <link href="https://jsdelivr.net" rel="stylesheet">
-    <!-- Leaflet CSS pour la carte interactive -->
     <link rel="stylesheet" href="https://unpkg.com" />
     <style>
-        body { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .card { background-color: #1e1e1e; border: 1px solid #2d2d2d; color: #e0e0e0; }
-        #map { height: 450px; border-radius: 8px; border: 2px solid #3d3d3d; }
-        .btn-primary { background-color: #0d6efd; border: none; }
-        .btn-primary:hover { background-color: #0b5ed7; }
-        .step-box { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 8px; }
-        .step-item { background: #2a2a2a; border: 1px solid #3d3d3d; text-align: center; padding: 6px; border-radius: 4px; cursor: pointer; }
-        .step-item.active { background: #0d6efd; border-color: #0d6efd; color: #fff; }
+        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; }
+        .card { background-color: #1e1e1e; border: 1px solid #2d2d2d; color: #e0e0e0; padding: 15px; margin-bottom: 15px; }
+        #map { height: 350px; border-radius: 4px; border: 1px solid #3d3d3d; margin-top: 10px; }
+        h2, h3 { color: #0d6efd; font-weight: bold; }
+        .form-check-label { cursor: pointer; }
     </style>
 </head>
-<body class="py-4">
-<div class="container-fluid px-4">
-    <header class="mb-4 pb-2 border-bottom border-secondary">
-        <h1 class="text-primary fw-bold">⛵ Hub Central - Découpeur Géospatial GRIB</h1>
-        <p class="text-muted">Sélectionnez votre zone sur la carte, scannez le catalogue et téléchargez votre fichier GRIB sur mesure.</p>
-    </header>
+<body>
+<div class="container">
+    <div class="card">
+        <h2>🌐 GRIB Cloud Cropper</h2>
+        <p class="text-muted">Configurez le type de données puis lancez le scan.</p>
+    </div>
 
-    <div class="row g-4">
-        <!-- Colonne de Gauche : Cartographie -->
-        <div class="col-xl-7 col-lg-6">
-            <div class="card p-3 mb-3">
-                <h5 class="card-title text-info fw-bold mb-3">1. Délimitation de la Zone de Routage</h5>
-                <div id="map"></div>
-                <div class="row g-2 mt-2 text-center text-monospace small">
-                    <div class="col-3"><span class="badge bg-secondary">Nord : <span id="lbl-n">45.00</span>°</span></div>
-                    <div class="col-3"><span class="badge bg-secondary">Sud : <span id="lbl-s">40.00</span>°</span></div>
-                    <div class="col-3"><span class="badge bg-secondary">Ouest : <span id="lbl-w">-5.00</span>°</span></div>
-                    <div class="col-3"><span class="badge bg-secondary">Est : <span id="lbl-e">5.00</span>°</span></div>
+    <div class="row">
+        <!-- Colonne de configuration (Gauche) -->
+        <div class="col-md-5">
+            <div class="card">
+                <h3>⚙ Type de Données GRIB :</h3>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="levtype" id="mode-sfc" value="sfc" checked onchange="updateLevType('sfc')">
+                    <label class="form-check-label" for="mode-sfc">🌍 MODE SURFACE (Vent à 10m, Pression MSL, etc.)</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="levtype" id="mode-pl" value="pl" onchange="updateLevType('pl')">
+                    <label class="form-check-label" for="mode-pl">🌬 MODE ALTITUDE (Pression, Vents verticaux hPa, etc.)</label>
                 </div>
             </div>
-            
-            <!-- Bloc Console de Nettoyage et Téléchargement -->
-            <div class="card p-3">
-                <button class="btn btn-sm btn-outline-danger w-100" id="btn-clean" onclick="cleanStorage()">🧹 Vider le cache du stockage Cloud</button>
+
+            <div class="card">
+                <h3>⏱ 1. Échéances :</h3>
+                <div id="steps-container" class="mb-3">
+                    <div class="form-check form-check-inline"><input class="form-check-input chk-step" type="checkbox" value="12" id="st-12"><label class="form-check-label" for="st-12">+12h</label></div>
+                    <div class="form-check form-check-inline"><input class="form-check-input chk-step" type="checkbox" value="24" id="st-24"><label class="form-check-label" for="st-24">+24h</label></div>
+                    <div class="form-check form-check-inline"><input class="form-check-input chk-step" type="checkbox" value="48" id="st-48"><label class="form-check-label" for="st-48">+48h</label></div>
+                    <div class="form-check form-check-inline"><input class="form-check-input chk-step" type="checkbox" value="72" id="st-72"><label class="form-check-label" for="st-72">+72h</label></div>
+                </div>
+
+                <!-- INTEGRATION HARMONIEUSE DE LA CASE DE SECOURS -->
+                <div style="margin: 15px 0; padding: 10px; border: 1px solid #ffc107; border-radius: 4px; background: rgba(255,193,7,0.05);">
+                    <label style="color: #ffc107; font-weight: bold; cursor: pointer; display: block; margin: 0;">
+                        <input type="checkbox" id="useFallbackRun" style="margin-right: 6px; transform: scale(1.1);">
+                        ⚠️ Run de secours (12Z de la veille)
+                    </label>
+                    <div style="color: #888; font-size: 0.8em; margin-top: 3px; margin-left: 20px;">
+                        À cocher si le scan du Run 00Z d'aujourd'hui échoue (avant 07h30 UTC).
+                    </div>
+                </div>
+
+                <button class="btn btn-warning w-100 fw-bold text-dark" id="btn-scan" onclick="scanCatalog()">🔍 Scan automatique du fichier distant</button>
+            </div>
+
+            <div class="card">
+                <h3>📊 2. Paramètres détectés :</h3>
+                <div id="params-box" class="text-muted">En attente du scan...</div>
+            </div>
+
+            <div class="card">
+                <h3>📉 3. Profondeurs détectées :</h3>
+                <div id="levels-box" class="text-muted">En attente du scan...</div>
             </div>
         </div>
 
-        <!-- Colonne de Droite : Paramétrage Météo -->
-        <div class="col-xl-5 col-lg-6">
-            <div class="card p-3 mb-3">
-                <h5 class="card-title text-info fw-bold mb-3">2. Type de Modèle & Niveau</h5>
-                <div class="btn-group w-100 mb-3" role="group">
-                    <input type="radio" class="btn-check" name="levtype" id="mode-sfc" value="sfc" checked onclick="toggleLevType('sfc')">
-                    <label class="btn btn-outline-primary" for="mode-sfc">🌊 Mode Surface (sfc)</label>
-                    
-                    <input type="radio" class="btn-check" name="levtype" id="mode-pl" value="pl" onclick="toggleLevType('pl')">
-                    <label class="btn btn-outline-primary" for="mode-pl">☁️ Mode Altitude Isobare (pl)</label>
-                </div>
-
-                <!-- CASE À COCHER : SÉLECTEUR DE RUN MANUEL -->
-                <div class="form-check form-switch p-3 my-2 border border-warning rounded" style="background: rgba(255,193,7,0.05);">
-                    <input class="form-check-input" type="checkbox" id="useFallbackRun">
-                    <label class="form-check-label fw-bold text-warning" for="useFallbackRun">
-                        ⚠️ Activer le Run de secours (12Z de la veille)
-                    </label>
-                    <div class="form-text text-muted small">Cochez cette case uniquement si le scan du Run 00Z du jour renvoie une erreur 404 (avant 07h30 UTC).</div>
+        <!-- Colonne de cartographie (Droite) -->
+        <div class="col-md-7">
+            <div class="card">
+                <h3>💾 4. Zones Favorites :</h3>
+                <div class="input-group">
+                    <select class="form-select bg-dark text-white border-secondary" id="select-favorite">
+                        <option value="">-- Choisir une zone --</option>
+                        <option value="manche">Manche / Bretagne</option>
+                        <option value="gascogne">Golfe de Gascogne</option>
+                        <option value="med">Méditerranée Ouest</option>
+                    </select>
+                    <button class="btn btn-outline-primary" onclick="loadFavoriteZone()">📂 OK</button>
                 </div>
             </div>
 
-            <div class="card p-3 mb-3">
-                <h5 class="card-title text-info fw-bold mb-3">3. Échéances de Prévision (Pas de 12h)</h5>
-                <div class="step-box mb-3" id="step-container">
-                    <!-- Génération dynamique des pas temporels -->
-                    <script>
-                        const container = document.getElementById('step-container');
-                        for(let h=0; h<=120; h+=12) {
-                            container.innerHTML += `<div class="step-item" data-step="${h}" onclick="toggleStep(this)">+${h}h</div>`;
-                        }
-                    </script>
-                </div>
-                <button class="btn btn-warning fw-bold text-dark w-100" id="btn-scan" onclick="scanModelCatalog()">🔍 1. Interroger & Scanner le Catalogue</button>
-            </div>
-
-            <!-- Listes chargées dynamiquement après le scan réussi -->
-            <div class="card p-3 mb-3 d-none" id="dynamic-filters-box">
-                <h5 class="card-title text-success fw-bold mb-3">4. Filtrage Fin des Variables Diagnostiquées</h5>
-                <div class="mb-3">
-                    <label class="form-label fw-bold">Champs physiques disponibles :</label>
-                    <div id="params-checkboxes" class="border border-secondary p-2 rounded" style="max-height: 180px; overflow-y: auto;"></div>
-                </div>
-                <div class="mb-3 id="levels-wrapper">
-                    <label class="form-label fw-bold">Niveaux de hauteur disponibles :</label>
-                    <div id="levels-checkboxes" class="border border-secondary p-2 rounded" style="max-height: 150px; overflow-y: auto;"></div>
-                </div>
+            <div class="card">
+                <h3>🌐 5. Zone de sélection :</h3>
+                <div id="map"></div>
+                <div class="text-center mt-2 small text-muted" id="bounds-display">Aucune zone tracée.</div>
                 
-                <button class="btn btn-success fw-bold w-100 btn-lg mb-2" id="btn-crop" onclick="executeFetchAndCrop()">⚡ 2. Lancer la Découpe Spatiale</button>
+                <button class="btn btn-success w-100 fw-bold btn-lg mt-3" id="btn-crop" onclick="fetchAndCropGrib()" disabled>🚀 Extraire & Télécharger</button>
                 
-                <!-- JAUGE DE CHARGEMENT PROGRESSIVE -->
-                <div class="progress mt-3 d-none" id="progress-wrapper" style="height: 25px;">
-                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-success fw-bold text-white" id="progress-bar" role="progressbar" style="width: 0%;">0%</div>
+                <div class="progress mt-2 d-none" id="progress-container" style="height: 20px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" id="progress-bar" style="width: 0%">Traitement...</div>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Scripts requis pour Bootstrap et Leaflet -->
-<script src="https://jsdelivr.net"></script>
 <script src="https://unpkg.com"></script>
 <script>
-    // Configuration initiale de la carte Leaflet centrée sur l'Atlantique Nord / Europe
-    const map = L.map('map').setView([43.0, -2.0], 4);
+    // Configuration de la carte Leaflet
+    const map = L.map('map').setView([45.0, -2.0], 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-    // Initialisation du rectangle de sélection éditable à la souris
-    let bounds = { n: 50.0, s: 35.0, w: -10.0, e: 8.0 };
-    const selectArea = L.rectangle([[bounds.s, bounds.w], [bounds.n, bounds.e]], {
-        color: "#0d6efd", weight: 2, fillColor: "#0d6efd", fillOpacity: 0.15, editable: true
-    }).addTo(map);
-    
-    // Événement à la fin du déplacement ou redimensionnement du rectangle
-    function updateBoundsDisplay() {
-        const b = selectArea.getBounds();
-        bounds = { n: b.getNorth().toFixed(2), s: b.getSouth().toFixed(2), w: b.getWest().toFixed(2), e: b.getEast().toFixed(2) };
-        document.getElementById('lbl-n').innerText = bounds.n;
-        document.getElementById('lbl-s').innerText = bounds.s;
-        document.getElementById('lbl-w').innerText = bounds.w;
-        document.getElementById('lbl-e').innerText = bounds.e;
-    }
-    selectArea.on('pm:update', updateBoundsDisplay); // Si plugin Leaflet.PM activé
-    map.on('moveend', function() {
-        // Option alternative simplifiée : se caler sur la vue de l'écran si pas d'édition
-        const b = map.getBounds();
-        bounds = { n: b.getNorth().toFixed(2), s: b.getSouth().toFixed(2), w: b.getWest().toFixed(2), e: b.getEast().toFixed(2) };
-        document.getElementById('lbl-n').innerText = bounds.n;
-        document.getElementById('lbl-s').innerText = bounds.s;
-        document.getElementById('lbl-w').innerText = bounds.w;
-        document.getElementById('lbl-e').innerText = bounds.e;
-    });
-
+    let currentBounds = null;
     let currentLevType = 'sfc';
-    function toggleStep(element) { element.classList.toggle('active'); }
-    function toggleLevType(mode) { currentLevType = mode; }
+    
+    // Rectangle de sélection Leaflet d'origine
+    const selectArea = L.rectangle([[43.0, -8.0], [49.0, 4.0]], {
+        color: "#0d6efd", weight: 2, fillOpacity: 0.1, editable: true
+    }).addTo(map);
 
-    function getSelectedSteps() {
-        return Array.from(document.querySelectorAll('.step-item.active')).map(el => parseInt(element = el.getAttribute('data-step')));
+    function updateBounds() {
+        const b = selectArea.getBounds();
+        currentBounds = { n: b.getNorth().toFixed(2), s: b.getSouth().toFixed(2), w: b.getWest().toFixed(2), e: b.getEast().toFixed(2) };
+        document.getElementById('bounds-display').innerText = `N: ${currentBounds.n} | S: ${currentBounds.s} | W: ${currentBounds.w} | E: ${currentBounds.e}`;
+    }
+    map.on('moveend', updateBounds);
+    updateBounds();
+
+    // Dictionnaire des zones favorites
+    const favorites = {
+        manche: { n: 51.50, s: 47.50, w: -7.00, e: 2.50 },
+        gascogne: { n: 48.00, s: 43.00, w: -10.00, e: -1.00 },
+        med: { n: 44.50, s: 37.00, w: -2.00, e: 9.00 }
+    };
+
+    function loadFavoriteZone() {
+        const code = document.getElementById('select-favorite').value;
+        if (code && favorites[code]) {
+            const z = favorites[code];
+            selectArea.setBounds([[z.s, z.w], [z.n, z.e]]);
+            map.fitBounds([[z.s, z.w], [z.n, z.e]]);
+            updateBounds();
+        }
     }
 
-    // FONCTION 1 : INTERROGATION ET SCAN DU CATALOGUE REEL
-    async function scanModelCatalog() {
-        const steps = getSelectedSteps();
-        const useFallback = document.getElementById('useFallbackRun').checked; // CAPTURE DE LA CASE À COCHER
-        
-        if(steps.length === 0) { alert("Cochez au moins une échéance temporelle."); return; }
+    function updateLevType(mode) {
+        currentLevType = mode;
+        document.getElementById('params-box').innerHTML = "En attente du scan...";
+        document.getElementById('levels-box').innerHTML = "En attente du scan...";
+        document.getElementById('btn-crop').disabled = true;
+    }
+
+    // INTERROGATION DU CATALOGUE (INJECTION FLUX BOUTON MANUEL)
+    async function scanCatalog() {
+        const checkedSteps = Array.from(document.querySelectorAll('.chk-step:checked')).map(el => el.value);
+        const useFallback = document.getElementById('useFallbackRun').checked;
+
+        if (checkedSteps.length === 0) { alert("Veuillez cocher au moins une échéance."); return; }
         
         const btn = document.getElementById('btn-scan');
-        btn.disabled = true; btn.innerText = "🔍 Analyse binaire du catalogue en cours...";
+        btn.disabled = true; btn.innerText = "Scan en cours...";
 
         try {
-            const resp = await fetch('/api/scan_ecmwf', {
+            const r = await fetch('/api/scan_ecmwf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ steps: steps, levtype: currentLevType, use_fallback: useFallback }) // ENVOI AU SERVEUR
+                body: JSON.stringify({ steps: checkedSteps, levtype: currentLevType, use_fallback: useFallback })
             });
-            const res = await resp.json();
-            
-            if(!res.success) { alert("❌ Erreur : " + res.error); return; }
+            const res = await r.json();
+            if (res.error) { alert(res.error); return; }
 
-            // Affichage et peuplement des filtres dynamiques reçus du serveur
-            document.getElementById('dynamic-filters-box').classList.remove('d-none');
-            
-            const pBox = document.getElementById('params-checkboxes'); pBox.innerHTML = "";
+            const pBox = document.getElementById('params-box'); pBox.innerHTML = "";
             res.params.forEach(p => {
                 pBox.innerHTML += `<div class="form-check"><input class="form-check-input chk-p" type="checkbox" value="${p}" id="${p}" checked><label class="form-check-label" for="${p}">${p}</label></div>`;
             });
 
-            const lBox = document.getElementById('levels-checkboxes'); lBox.innerHTML = "";
-            if(currentLevType === 'sfc') {
-                document.getElementById('levels-wrapper').classList.add('d-none');
-                lBox.innerHTML = `<input type="hidden" class="chk-l" value="0">`;
+            const lBox = document.getElementById('levels-box'); lBox.innerHTML = "";
+            if (currentLevType === 'sfc') {
+                lBox.innerHTML = `<span class="text-success">Données de surface (0m)</span><input type="hidden" class="chk-l" value="0">`;
             } else {
-                document.getElementById('levels-wrapper').classList.remove('d-none');
                 res.levels.forEach(l => {
-                    lBox.innerHTML += `<div class="form-check"><input class="chk-l form-check-input" type="checkbox" value="${l}" id="lv-${l}" checked><label class="form-check-label" for="lv-${l}">${l} hPa</label></div>`;
+                    lBox.innerHTML += `<div class="form-check"><input class="form-check-input chk-l" type="checkbox" value="${l}" id="lv-${l}" checked><label class="form-check-label" for="lv-${l}">${l} hPa</label></div>`;
                 });
             }
-        } catch(e) {
-            alert("Erreur de communication Cloud : " + e);
+            document.getElementById('btn-crop').disabled = false;
+        } catch (e) {
+            alert("Erreur de liaison serveur : " + e);
         } finally {
-            btn.disabled = false; btn.innerText = "🔍 1. Interroger & Scanner le Catalogue";
+            btn.disabled = false; btn.innerText = "🔍 Scan automatique du fichier distant";
         }
     }
 
-    // FONCTION 2 : PIPELINE DE DECOUPE ET COMPILATION DU GRIB FINALE
-    async function executeFetchAndCrop() {
-        const boundsData = bounds;
-        const steps = getSelectedSteps();
-        const useFallback = document.getElementById('useFallbackRun').checked; // CAPTURE DE LA CASE À COCHER
-        const pChecked = Array.from(document.querySelectorAll('.chk-p:checked')).map(el => el.value);
-        const lChecked = Array.from(document.querySelectorAll('.chk-l:checked')).map(el => el.value);
+    // DECOUPE FINALE ET LIVRAISON DU FICHIER (INJECTION CONFIGURATION BOUTON MANUEL)
+    async function fetchAndCropGrib() {
+        const steps = Array.from(document.querySelectorAll('.chk-step:checked')).map(el => el.value);
+        const params = Array.from(document.querySelectorAll('.chk-p:checked')).map(el => el.value);
+        const levels = Array.from(document.querySelectorAll('.chk-l:checked')).map(el => el.value);
+        const useFallback = document.getElementById('useFallbackRun').checked;
 
-        document.getElementById('progress-wrapper').classList.remove('d-none');
+        document.getElementById('progress-container').classList.remove('d-none');
         const pBar = document.getElementById('progress-bar');
-        pBar.style.width = "5%"; pBar.innerText = "5%";
+        pBar.style.width = "10%"; pBar.innerText = "Téléchargement...";
 
-        // Démarrage du pooling de progression en temps réel
-        const interval = setInterval(async () => {
-            const r = await fetch('/api/progress');
-            const d = await r.json();
-            pBar.style.width = d.progress + "%"; pBar.innerText = d.progress + "%";
-        }, 1200);
+        const track = setInterval(async () => {
+            const resp = await fetch('/api/progress');
+            const d = await resp.json();
+            pBar.style.width = d.progress + "%"; pBar.innerText = `Découpe : ${d.progress}%`;
+        }, 1000);
 
         try {
             const resp = await fetch('/api/fetch_and_crop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    bounds: boundsData, params: pChecked, levels: lChecked, steps: steps, levtype: currentLevType, use_fallback: useFallback // ENVOI COMPLET
+                    bounds: currentBounds, params: params, levels: levels, steps: steps, levtype: currentLevType, use_fallback: useFallback
                 })
             });
-            clearInterval(interval);
+            clearInterval(track);
             const res = await resp.json();
 
-            if(!res.success) { pBar.classList.add('bg-danger'); pBar.innerText = "Échec"; alert("❌ " + res.error); return; }
-
-            pBar.style.width = "100%"; pBar.innerText = "✓ Fichier prêt !";
-            // Lancement du téléchargement binaire automatique dans le navigateur
+            if (res.error) { alert(res.error); pBar.innerText = "Échec"; return; }
+            
+            pBar.style.width = "100%"; pBar.innerText = "✓ Terminé !";
             window.location.href = res.download_url;
-        } catch(e) {
-            clearInterval(interval);
-            alert("Erreur réseau durant le découpage : " + e);
+        } catch (e) {
+            clearInterval(track);
+            alert("Erreur réseau : " + e);
         }
-    }
-
-    async function cleanStorage() {
-        const r = await fetch('/api/clean', { method: 'POST' });
-        const res = await r.json();
-        alert(res.message || res.error);
     }
 </script>
 </body>
