@@ -105,10 +105,10 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # Extraction numérique stricte (ex: "300 hPa" -> 300)
-            val_txt = str(l).strip().split()[0]
-            if val_txt.isdigit():
-                selected_levels.append(int(val_txt))
+            # CORRECTION LOGIQUE : Isolement précis du premier mot pour conversion numérique
+            val_txt = str(l).strip().split()
+            if val_txt and val_txt[0].isdigit():
+                selected_levels.append(int(val_txt[0]))
         except Exception as e:
             print(f"Erreur décodage niveau {l}: {e}")
             continue
