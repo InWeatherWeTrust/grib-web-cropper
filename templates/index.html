@@ -15,6 +15,7 @@
     </style>
 </head>
 <body>
+
 <div class="container">
     <div class="card">
         <h2>🌐 GRIB Cloud Cropper</h2>
@@ -22,7 +23,7 @@
     </div>
 
     <div class="row">
-        <!-- Colonne de configuration (Gauche) -->
+        <!-- Colonne de configuration -->
         <div class="col-md-5">
             <div class="card">
                 <h3>⚙ Type de Données GRIB :</h3>
@@ -35,7 +36,6 @@
                     <label class="form-check-label" for="mode-pl">🌬 MODE ALTITUDE (Pression, Vents verticaux hPa, etc.)</label>
                 </div>
             </div>
-
             <div class="card">
                 <h3>⏱ 1. Échéances :</h3>
                 <div id="steps-container" class="mb-3">
@@ -45,7 +45,7 @@
                     <div class="form-check form-check-inline"><input class="form-check-input chk-step" type="checkbox" value="72" id="st-72"><label class="form-check-label" for="st-72">+72h</label></div>
                 </div>
 
-                <!-- INTEGRATION HARMONIEUSE DE LA CASE DE SECOURS -->
+                <!-- INTEGRATION EXCLUSIVEMENT TEXTUELLE DE LA CASE DE SECOURS -->
                 <div style="margin: 15px 0; padding: 10px; border: 1px solid #ffc107; border-radius: 4px; background: rgba(255,193,7,0.05);">
                     <label style="color: #ffc107; font-weight: bold; cursor: pointer; display: block; margin: 0;">
                         <input type="checkbox" id="useFallbackRun" style="margin-right: 6px; transform: scale(1.1);">
@@ -102,14 +102,14 @@
 
 <script src="https://unpkg.com"></script>
 <script>
-    // Configuration de la carte Leaflet
+    // Configuration d'origine de la carte
     const map = L.map('map').setView([45.0, -2.0], 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
     let currentBounds = null;
     let currentLevType = 'sfc';
     
-    // Rectangle de sélection Leaflet d'origine
+    // Rectangle de sélection Leaflet historique
     const selectArea = L.rectangle([[43.0, -8.0], [49.0, 4.0]], {
         color: "#0d6efd", weight: 2, fillOpacity: 0.1, editable: true
     }).addTo(map);
@@ -122,7 +122,7 @@
     map.on('moveend', updateBounds);
     updateBounds();
 
-    // Dictionnaire des zones favorites
+    // Dictionnaire de vos zones favorites
     const favorites = {
         manche: { n: 51.50, s: 47.50, w: -7.00, e: 2.50 },
         gascogne: { n: 48.00, s: 43.00, w: -10.00, e: -1.00 },
@@ -146,10 +146,10 @@
         document.getElementById('btn-crop').disabled = true;
     }
 
-    // INTERROGATION DU CATALOGUE (INJECTION FLUX BOUTON MANUEL)
+    // VOTRE FONCTION SCAN REPRISE AVEC LA TRANSMISSION DE LA CASE A COCHER
     async function scanCatalog() {
         const checkedSteps = Array.from(document.querySelectorAll('.chk-step:checked')).map(el => el.value);
-        const useFallback = document.getElementById('useFallbackRun').checked;
+        const useFallback = document.getElementById('useFallbackRun').checked; // LECTURE DE LA CASE
 
         if (checkedSteps.length === 0) { alert("Veuillez cocher au moins une échéance."); return; }
         
@@ -160,7 +160,7 @@
             const r = await fetch('/api/scan_ecmwf', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ steps: checkedSteps, levtype: currentLevType, use_fallback: useFallback })
+                body: JSON.stringify({ steps: checkedSteps, levtype: currentLevType, use_fallback: useFallback }) // ENVOI FLUX DE SECOURS
             });
             const res = await r.json();
             if (res.error) { alert(res.error); return; }
@@ -186,12 +186,12 @@
         }
     }
 
-    // DECOUPE FINALE ET LIVRAISON DU FICHIER (INJECTION CONFIGURATION BOUTON MANUEL)
+    // VOTRE FONCTION EXTRACTION REPRISE AVEC LA TRANSMISSION DE LA CASE A COCHER
     async function fetchAndCropGrib() {
         const steps = Array.from(document.querySelectorAll('.chk-step:checked')).map(el => el.value);
         const params = Array.from(document.querySelectorAll('.chk-p:checked')).map(el => el.value);
         const levels = Array.from(document.querySelectorAll('.chk-l:checked')).map(el => el.value);
-        const useFallback = document.getElementById('useFallbackRun').checked;
+        const useFallback = document.getElementById('useFallbackRun').checked; // LECTURE DE LA CASE
 
         document.getElementById('progress-container').classList.remove('d-none');
         const pBar = document.getElementById('progress-bar');
@@ -208,7 +208,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    bounds: currentBounds, params: params, levels: levels, steps: steps, levtype: currentLevType, use_fallback: useFallback
+                    bounds: currentBounds, params: params, levels: levels, steps: steps, levtype: currentLevType, use_fallback: useFallback // ENVOI FLUX DE SECOURS
                 })
             });
             clearInterval(track);
