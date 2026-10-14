@@ -22,9 +22,13 @@ PROGRESS = 0
 def get_cep_url(step_val, levtype="sfc"):
     """Calcule l'URL haute disponibilité du CEP Open Data sur AWS"""
     now = datetime.utcnow()
-    # Utilisation du run de 00Z d'aujourd'hui
     date_str = now.strftime("%Y%m%d")
-    step_str = f"{step_val:03d}1"
+    
+    # Correction de la nomenclature de l'échéance de l'ECMWF (ex: 012.1)
+    if step_val == 0:
+        step_str = "000.1"
+    else:
+        step_str = f"{step_val:03d}1"
     
     if levtype == "pl":
         return f"https://ecmwf.int{date_str}/00z/ifs/0p25/oper/{date_str}0000-{step_str}-oper-pl.grib2"
@@ -84,9 +88,10 @@ def fetch_and_crop():
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            parts = str(l).strip().split()[0]
-            if parts.isdigit():
-                selected_levels.append(int(parts))
+            parts = str(l).strip().split()
+            # CORRECTION CRUCIALE : Extraction du premier index textuel de la liste
+            if parts and parts[0].isdigit():
+                selected_levels.append(int(parts[0]))
         except:
             continue
             
@@ -135,25 +140,24 @@ def fetch_and_crop():
                                 match_l = "isobaric" in lev_type and level in selected_levels
                                 
                             if match_p and match_l:
-                                # 1. Extraction chirurgicale des points de la zone cible
+                                # 1. Extraction des points de la zone cible
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 
-                                # 2. RECONSTRUCTION CRUCIALE DE L'ENTÊTE GEOMETRIQUE (Correction qtVlm/XyGrib)
+                                # 2. RECONSTRUCTION ET SYNCHRONISATION DE L'ENTÊTE GEOMETRIQUE (Zéro crash qtVlm)
                                 grb.values = sub_data
                                 
-                                # Injection des nouvelles coordonnées des coins de la sous-grille
                                 grb['latitudeOfFirstGridPointInDegrees'] = float(bounds["n"])
                                 grb['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
                                 grb['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
                                 grb['longitudeOfLastGridPointInDegrees'] = float(bounds["e"])
                                 
-                                # Ajustement des dimensions Ni (colonnes) et Nj (lignes) sur la taille réelle du tableau découpé
+                                # CORRECTION DES INDEX DE SHAPE (Colonnes et Lignes de la sous-grille)
                                 grb['Ni'] = int(sub_data.shape[1])
                                 grb['Nj'] = int(sub_data.shape[0])
                                 
-                                # Écriture propre du message GRIB calibré
                                 fout.write(grb.tostring())
-                        except Exception:
+                        except Exception as msg_err:
+                            print(f"Erreur d'écriture message : {msg_err}")
                             continue
                     fin.close()
                     os.remove(chunk_raw_path)
