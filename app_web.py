@@ -103,8 +103,14 @@ def fetch_and_crop():
     bounds = data.get("bounds")
     selected_params_raw = data.get("params", [])
     selected_levels = [int(l) for l in data.get("levels", [])]
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
-    levtype = data.get("levtype", "sfc")
+    
+    requested_steps = [int(s) for s in data.get("steps", [])]
+    
+    # CORRECTION CHIRURGICALE : On injecte 00h UNIQUE-MENT si l'utilisateur commence à 12h
+    if 12 in requested_steps and 0 not in requested_steps:
+        requested_steps.append(0)
+        
+    selected_steps = sorted(list(set(requested_steps)))
 
     selected_params = []
     for p in selected_params_raw:
@@ -153,31 +159,21 @@ def fetch_and_crop():
                             level_match = level in selected_levels if selected_levels else True
 
                             if param_match and level_match:
-                                # 1. Extraction des pixels et des matrices géographiques de la zone cible
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
-                                
-                                # Calcule le nombre de lignes (Nj) et de colonnes (Ni) de votre rectangle
                                 nj, ni = sub_data.shape
                                 
-                                # 2. RECONSTRUCTION BIJECTIVE DU MESSAGE (La méthode officielle ECMWF/pygrib)
-                                # On clone le squelette du message d'origine pour conserver les clés physiques (vent, pression, unité)
                                 msg_clone = pygrib.fromstring(grb.tostring())
-                                
-                                # On écrase la structure spatiale globale par les dimensions géométriques de la sous-grille
                                 msg_clone.values = sub_data
                                 msg_clone['Ni'] = int(ni)
                                 msg_clone['Nj'] = int(nj)
                                 
-                                # Injection des coordonnées géographiques réelles de vos frontières de routage
                                 msg_clone['latitudeOfFirstGridPointInDegrees'] = float(bounds["n"])
                                 msg_clone['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
                                 msg_clone['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
                                 msg_clone['longitudeOfLastGridPointInDegrees'] = float(bounds["e"])
                                 
-                                # Écriture du message GRIB réindexé de manière transparente
                                 fout.write(msg_clone.tostring())
-                        except Exception as msg_err:
-                            print(f"Saut de message : {msg_err}")
+                        except Exception:
                             continue
                     fin.close()
                 finally:
