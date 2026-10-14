@@ -20,7 +20,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 PROGRESS = 0
 
 def check_url_availability(url):
-    """Vérifie par une requête HEAD rapide si le fichier existe sur le serveur de l'ECMWF"""
+    """Vérifie par une requête HEAD si le run est disponible sur l'IP fixe de l'ECMWF"""
     ctx = ssl._create_unverified_context()
     try:
         req = urllib.request.Request(url, method='HEAD')
@@ -32,23 +32,22 @@ def check_url_availability(url):
         return False
 
 def get_arpege_routing_strategy(step_val, levtype="sfc"):
-    """Analyse les catalogues en temps réel, choisit le meilleur run et recalcule l'échéance cible"""
+    """Aiguilleur temporel intelligent : bascule de run et gestion du pas tri-horaire"""
     ecmwf_static_ip = "136.156.129.245"
     suffix = "pl" if levtype == "pl" else "fc"
+    step_str = f"{step_val:03d}"
     
-    # 1. STRATÉGIE A : Run 00Z d'AUJOURD'HUI (Idéal)
+    # 1. Stratégie A : Run 00Z d'aujourd'hui
     today_str = datetime.utcnow().strftime("%Y%m%d")
-    url_today = f"https://{ecmwf_static_ip}/forecasts/{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_val:03d}h-oper-{suffix}.grib2"
-    
+    url_today = f"https://{ecmwf_static_ip}/forecasts/{today_str}/00z/arpege/0p25/oper/{today_str}0000-{step_str}h-oper-{suffix}.grib2"
     if check_url_availability(url_today):
-        return url_today, step_val
+        return url_today
         
-    # 2. STRATÉGIE B : Run 12Z d'HIER (Repli avec décalage temporel de +12h)
+    # 2. Stratégie B : Repli automatique sur 12Z d'hier avec décalage de +12h
     yesterday_str = (datetime.utcnow() - timedelta(days=1)).strftime("%Y%m%d")
     adjusted_step = step_val + 12
-    url_yesterday = f"https://{ecmwf_static_ip}/forecasts/{yesterday_str}/12z/arpege/0p25/oper/{yesterday_str}1200-{adjusted_step:03d}h-oper-{suffix}.grib2"
-    
-    return url_yesterday, adjusted_step
+    adjusted_str = f"{adjusted_step:03d}"
+    return f"https://{ecmwf_static_ip}/forecasts/{yesterday_str}/12z/arpege/0p25/oper/{yesterday_str1200}-{adjusted_str}h-oper-{suffix}.grib2"
 
 @app.route('/')
 @app.route('/arpege')
@@ -62,25 +61,28 @@ def get_progress():
 
 @app.route('/api/scan_arpege', methods=['POST'])
 def scan_arpege():
-    """Affiche les listes de paramètres cibles. Plus de requêtes réseau instables au démarrage."""
+    """Génère la liste des paramètres réels basée sur votre scan du fichier binaire"""
     data = request.json
     levtype = data.get("levtype", "sfc")
     
     if levtype == "pl":
-        # On affiche les variables d'altitude requises pour le routage hauturier
+        # Paramètres d'altitude validés par votre inspection (Paquet IP1)
         params = [
-            "Vent Horizontal (Force/Direction) (wind)",
-            "Géopotentiel (Hauteur de pression) (gh)",
-            "Température de l'air (t)"
+            "U component of wind (u)",
+            "V component of wind (v)",
+            "Geopotential (z)",
+            "Temperature (t)",
+            "Relative humidity (r)"
         ]
-        levels = ["700 hPa", "500 hPa", "400 hPa", "300 hPa", "250 hPa"]
+        levels = ["1000 hPa", "850 hPa", "700 hPa", "500 hPa", "400 hPa", "300 hPa", "250 hPa"]
     else:
-        # On affiche les variables de surface fondamentales
+        # Paramètres de surface validés (Paquet SP1)
         params = [
-            "Vent Moyen à 10m (Force/Direction) (wind10m)",
-            "Pression moyenne au niveau de la mer (pressure)",
-            "Température à 2m (t2m)",
-            "Total des Précipitations (tp)"
+            "10m U-component of wind (10u)",
+            "10m V-component of wind (10v)",
+            "Mean sea level pressure (msl)",
+            "2m temperature (2t)",
+            "Total precipitation (tp)"
         ]
         levels = ["0 (surface)"]
         
@@ -94,18 +96,23 @@ def fetch_and_crop():
     data = request.json
     bounds = data.get("bounds")
     levtype = data.get("levtype", "sfc")
-    selected_params_raw = data.get("params",)
-    selected_steps = sorted(list(set([int(s) for s in data.get("steps",)])))
+    selected_params_raw = data.get("params", [])
+    selected_levels_raw = data.get("levels", [])
+    selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    # Traduction large des choix de l'utilisateur pour couvrir TOUTES les nomenclatures possibles
-    target_categories = []
-    for p in selected_params_raw:
-        p_lower = str(p).lower()
-        if "wind" in p_lower: target_categories.append("wind")
-        elif "pressure" in p_lower or "pmer" in p_lower: target_categories.append("pressure")
-        elif "t2m" in p_lower or "temperature" in p_lower: target_categories.append("temp")
-        elif "gh" in p_lower or "geopotential" in p_lower: target_categories.append("gh")
-        elif "tp" in p_lower or "precipitation" in p_lower: target_categories.append("tp")
+    # Nettoyage des chaînes de filtres
+    selected_params = [p.split("(")[-1].replace(")", "").strip().lower() for p in selected_params_raw if "(" in p]
+    
+    selected_levels = []
+    for l in selected_levels_raw:
+        try:
+            parts = str(l).strip().split()
+            if parts and parts[0].isdigit():
+                selected_levels.append(int(parts[0]))
+        except:
+            continue
+    if levtype == "sfc":
+        selected_levels.append(0)
         
     total_steps = len(selected_steps)
     output_filename = "crop_arpege_world.grib2"
@@ -119,7 +126,7 @@ def fetch_and_crop():
             for step_index, step_val in enumerate(selected_steps):
                 PROGRESS = int((step_index / total_steps) * 100)
                 
-                url, target_step = get_arpege_routing_strategy(step_val, levtype)
+                url = get_ecmwf_arpege_url(step_val, levtype)
                 chunk_raw_path = os.path.join(UPLOAD_FOLDER, f"temp_arp_{step_val}.grib2")
                 if os.path.exists(chunk_raw_path): os.remove(chunk_raw_path)
                 
@@ -136,26 +143,24 @@ def fetch_and_crop():
                     print(f"Saut de l'échéance {step_val} : {step_error}")
                     continue
                             
+                # FILTRAGE ALIGNÉ À 100% SUR VOTRE RÉSULTAT DU TERMINAL
                 if os.path.exists(chunk_raw_path) and os.path.getsize(chunk_raw_path) > 0:
                     fin = pygrib.open(chunk_raw_path)
                     for grb in fin:
                         try:
                             short_name = str(getattr(grb, 'shortName', '')).lower()
+                            level = int(grb.level if hasattr(grb, 'level') else 0)
+                            lev_type = str(getattr(grb, 'typeOfLevel', '')).lower()
                             
-                            # CAPTURE LARGE SANS FILTRE STRICT (On intercepte les variantes OMM et Météo-France)
-                            is_match = False
-                            if "wind" in target_categories and short_name in ['u', 'v', '10u', '10v', 'ucomp', 'vcomp', 'ws', 'wdir']:
-                                is_match = True
-                            elif "pressure" in target_categories and short_name in ['msl', 'prmsl', 'pres']:
-                                is_match = True
-                            elif "temp" in target_categories and short_name in ['2t', 't']:
-                                is_match = True
-                            elif "gh" in target_categories and short_name in ['gh', 'z']:
-                                is_match = True
-                            elif "tp" in target_categories and short_name in ['tp', 'precip']:
-                                is_match = True
+                            match_p = short_name in selected_params
+                            
+                            # Validation des hauteurs isobariques (isobaricInhPa) ou de surface
+                            if levtype == "sfc":
+                                match_l = "surface" in lev_type or "ground" in lev_type or level == 0
+                            else:
+                                match_l = "isobaric" in lev_type and level in selected_levels
                                 
-                            if is_match:
+                            if match_p and match_l:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 grb.values = sub_data
                                 fout.write(grb.tostring())
@@ -166,7 +171,7 @@ def fetch_and_crop():
                     
         PROGRESS = 100
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez la validité de votre run d'analyse."}), 400
+            return jsonify({"error": "Aucune donnée n'a pu être extraite. Vérifiez la parution temporelle."}), 400
             
         return jsonify({"success": True, "download_url": f"/arpege/api/download/{output_filename}"})
     except Exception as e:
