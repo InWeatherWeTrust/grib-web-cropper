@@ -37,7 +37,6 @@ def get_cep_url(step_val, levtype="sfc"):
 @app.route('/')
 @app.route('/cep')
 def index():
-    # CORRECTION ICI : Chargement de votre véritable page d'accueil centrale
     return render_template('index.html')
 
 @app.route('/api/progress', methods=['GET'])
@@ -89,6 +88,7 @@ def fetch_and_crop():
     for l in selected_levels_raw:
         try:
             parts = str(l).strip().split()
+            # CORRECTION DE SYNTAXE : Validation sur le premier mot textuel de la liste scindée
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
         except:
@@ -141,15 +141,12 @@ def fetch_and_crop():
                             if match_p and match_l:
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 
-                                grb.values = sub_data
+                                grb.values = sub_data.flatten()
                                 
                                 grb['latitudeOfFirstGridPointInDegrees'] = float(bounds["n"])
                                 grb['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
                                 grb['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
                                 grb['longitudeOfLastGridPointInDegrees'] = float(bounds["e"])
-                                
-                                grb['Ni'] = int(sub_data.shape[1])
-                                grb['Nj'] = int(sub_data.shape[0])
                                 
                                 fout.write(grb.tostring())
                         except Exception as msg_err:
