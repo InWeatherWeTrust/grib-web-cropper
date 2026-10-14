@@ -150,14 +150,15 @@ def fetch_and_crop():
                             level_match = level in selected_levels if selected_levels else True
 
                             if param_match and level_match:
-                                # 1. Extraction géographique de la zone demandée
+                                # 1. Extraction géographique de la zone cible (sous-matrice 2D)
                                 sub_data, lats, lons = grb.data(lat1=bounds["s"], lat2=bounds["n"], lon1=bounds["w"], lon2=bounds["e"])
                                 
-                                # 2. CORRECTION GÉOMÉTRIQUE : Aplatissement obligatoire du tableau
-                                # Cela contraint pygrib à mettre à jour la taille physique du message de manière légale
-                                grb.values = sub_data.flatten()
+                                # 2. RECONSTRUCTION GÉOMÉTRIQUE STRICTE 2D (Correction qtVlm & XyGrib)
+                                # Assigner le tableau sous sa forme native bidimensionnelle force pygrib 
+                                # à réécrire AUTOMATIQUEMENT les clés d'en-tête géométriques de la grille (Ni et Nj)
+                                grb.values = sub_data
                                 
-                                # 3. Réécriture des coordonnées limites de la sous-grille dans l'en-tête binaire
+                                # 3. Réécriture réglementaire des coordonnées limites du rectangle découpé
                                 grb['latitudeOfFirstGridPointInDegrees'] = float(bounds["n"])
                                 grb['latitudeOfLastGridPointInDegrees'] = float(bounds["s"])
                                 grb['longitudeOfFirstGridPointInDegrees'] = float(bounds["w"])
