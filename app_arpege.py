@@ -102,14 +102,14 @@ def fetch_and_crop():
     selected_levels_raw = data.get("levels", [])
     selected_steps = sorted(list(set([int(s) for s in data.get("steps", [])])))
     
-    # Nettoyage des chaînes de filtres
+    # Isolation des shortNames courts en minuscules
     selected_params = [p.split("(")[-1].replace(")", "").strip().lower() for p in selected_params_raw if "(" in p]
     
     selected_levels = []
     for l in selected_levels_raw:
         try:
-            # CORRECTION DE SYNTAXE : Extraction rigoureuse du premier élément textuel de la liste scindée
             parts = str(l).strip().split()
+            # CORRECTION DE SYNTAXE : On valide l'extraction sur le premier élément textuel de la liste
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
         except Exception as e:
@@ -159,7 +159,6 @@ def fetch_and_crop():
                             
                             match_p = short_name in selected_params
                             
-                            # Validation des hauteurs isobariques (isobaricInhPa) ou de surface
                             if levtype == "sfc":
                                 match_l = "surface" in lev_type or "ground" in lev_type or level == 0
                             else:
