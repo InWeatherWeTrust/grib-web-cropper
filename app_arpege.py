@@ -107,7 +107,7 @@ def fetch_and_crop():
     for l in selected_levels_raw:
         try:
             parts = str(l).strip().split()
-            # CORRECTION TECHNIQUE : On extrait et teste le premier élément textuel [0] de la liste scindée
+            # CORRECTION LOGIQUE : On vérifie parts[0] qui est la chaîne contenant le chiffre pur
             if parts and parts[0].isdigit():
                 selected_levels.append(int(parts[0]))
         except Exception as e:
@@ -157,7 +157,7 @@ def fetch_and_crop():
                             
                             match_p = short_name in selected_params
                             
-                            # Validation selon les types décodés par votre terminal (isobaricinhpa) [1]
+                            # Validation selon les types décodés par votre terminal (isobaricinhpa)
                             if levtype == "sfc":
                                 match_l = "surface" in lev_type or "ground" in lev_type or level == 0
                             else:
