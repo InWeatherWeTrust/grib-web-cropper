@@ -2,38 +2,34 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Cloud Cropper - Hub Central</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GRIB Cropper</title>
     <style>
-        body { margin: 0; font-family: sans-serif; background: #0f172a; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        .hub-container { text-align: center; max-width: 600px; padding: 30px; background: #1e293b; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        h1 { color: #38bdf8; margin-bottom: 10px; font-size: 28px; }
-        p { color: #94a3b8; margin-bottom: 30px; font-size: 15px; }
-        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .model-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 25px; border-radius: 8px; border: 2px solid #334155; background: #0f172a; color: white; text-decoration: none; cursor: pointer; transition: all 0.2s ease; }
-        .model-btn:hover { border-color: #0ea5e9; transform: translateY(-2px); background: rgba(14, 165, 233, 0.05); }
-        .model-btn.arp:hover { border-color: #f43f5e; background: rgba(244, 63, 94, 0.05); }
-        .btn-title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
-        .btn-desc { font-size: 12px; color: #64748b; }
+        :root { --bg:#0b1220; --panel:#121c30; --line:#26344f; --text:#e6edf7; --muted:#8fa0ba; --accent:#38bdf8; }
+        * { box-sizing: border-box; }
+        body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:var(--bg); color:var(--text); font-family:"IBM Plex Sans", system-ui, sans-serif; }
+        main { width:min(560px,100%); }
+        h1 { font-size:28px; margin:0 0 8px; font-weight:600; }
+        p { color:var(--muted); margin:0 0 28px; line-height:1.5; }
+        .model { display:block; padding:20px 22px; margin-bottom:12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); text-decoration:none; }
+        a.model:hover, a.model:focus-visible { border-color:var(--accent); outline:none; }
+        .model strong { display:block; font-size:18px; margin-bottom:4px; }
+        .model span { color:var(--muted); font-size:14px; }
+        .model.soon { opacity:.55; }
     </style>
 </head>
 <body>
-
-    <div class="hub-container">
-        <h1>🗺️ GRIB Cloud Cropper Hub</h1>
-        <p>Sélectionnez le modèle météorologique mondial que vous souhaitez extraire et découper :</p>
-        
-        <div class="btn-grid">
-            <a href="/cep" class="model-btn">
-                <span class="btn-title" style="color: #0ea5e9;">🇪🇺 Modèle CEP / IFS</span>
-                <span class="btn-desc">Centre Européen (0.25°)<br>Surface & Niveaux d'altitude</span>
-            </a>
-            
-            <a href="/arpege" class="model-btn arp">
-                <span class="btn-title" style="color: #f43f5e;">🇫🇷 Modèle ARPEGE (Non fonctionnel)</span>
-                <span class="btn-desc">Météo-France (0.25°)<br>Pas fin de 3h de surface</span>
-            </a>
-        </div>
+<main>
+    <h1>GRIB Cropper</h1>
+    <p>Découpez les prévisions GRIB d'un modèle global sur votre zone, avec les seuls paramètres et échéances dont vous avez besoin.</p>
+    <a class="model" href="/cep/">
+        <strong>CEP / IFS</strong>
+        <span>Centre européen, 0,25° — surface et niveaux en altitude</span>
+    </a>
+    <div class="model soon">
+        <strong>Autres modèles</strong>
+        <span>Pas encore disponible</span>
     </div>
-
+</main>
 </body>
 </html>
