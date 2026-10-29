@@ -2,262 +2,396 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>GRIB Cloud Cropper - Multi-Mode Edition</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GRIB Cropper — CEP / IFS</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400&display=swap">
     <style>
-        body { margin:0; font-family: sans-serif; display: flex; height: 100vh; background: #0f172a; color: #fff; }
-        #sidebar { width: 420px; padding: 20px; display: flex; flex-direction: column; gap: 10px; border-right: 1px solid #334155; box-sizing: border-box; background: #0f172a; overflow-y: auto; }
-        #map-container { flex: 1; height: 100%; position: relative; background: #0b0f19; overflow: hidden; }
-        #map-background { position: absolute; top:0; left:0; width:100%; height:100%; opacity:0.65; z-index:1; }
-        #grid-canvas { position: absolute; top:0; left:0; width:100%; height:100%; cursor: crosshair; z-index:2; }
-        button { background: #0ea5e9; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 13px; }
-        button:hover { background: #0284c7; }
-        button:disabled { background: #475569; cursor: not-allowed; }
-        select, input[type="text"] { background: #1e293b; color: white; border: 1px solid #334155; border-radius: 5px; padding: 6px; font-size: 13px; width: 100%; box-sizing: border-box; }
-        select[multiple] { min-height: 140px; }
-        h3 { font-size: 14px; margin-top: 5px; margin-bottom: 2px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-        .coords { font-family: monospace; color: #34d399; background: #1e293b; padding: 8px; border-radius: 5px; border: 1px solid #334155; font-size: 12px; }
-        .progress-box { display: none; flex-direction: column; gap: 5px; background: #1e293b; padding: 8px; border-radius: 5px; border: 1px solid #334155; }
-        progress { width: 100%; height: 12px; accent-color: #0ea5e9; }
-        .leaflet-zoom-box { border: 2px dashed #38bdf8; background: rgba(56, 189, 248, 0.18); position: absolute; z-index: 800; pointer-events: none; }
-        .btn-success { background: #10b981; } .btn-success:hover { background: #059669; }
-        .btn-warning { background: #f59e0b; color: #000; } .btn-warning:hover { background: #d97706; }
-        .step-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; background: #1e293b; padding: 10px; border-radius: 5px; border: 1px solid #334155; }
-        .step-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #cbd5e1; }
+        :root {
+            --bg:#0b1220; --panel:#121c30; --field:#0d1628; --line:#26344f;
+            --text:#e6edf7; --muted:#8fa0ba; --accent:#38bdf8; --accent-ink:#04202e;
+            --ok:#34d399; --warn:#fbbf24; --err:#f87171;
+        }
+        * { box-sizing:border-box; }
+        body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 "IBM Plex Sans", system-ui, sans-serif; }
+        header { display:flex; align-items:baseline; gap:16px; padding:14px 20px; border-bottom:1px solid var(--line); }
+        header h1 { margin:0; font-size:18px; font-weight:600; }
+        header a { color:var(--muted); text-decoration:none; }
+        header a:hover { color:var(--text); }
+        #run-info { margin-left:auto; color:var(--muted); font-size:13px; }
+
+        .layout { display:grid; grid-template-columns:minmax(320px,400px) 1fr; gap:12px; padding:12px; align-items:start; }
+        .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; display:flex; flex-direction:column; gap:10px; min-width:0; }
+        .panel h2 { margin:0; font-size:15px; font-weight:600; }
+        .panel h3 { margin:4px 0 0; font-size:13px; font-weight:600; color:var(--muted); }
+        #panel-map { padding:0; overflow:hidden; position:relative; min-height:420px; height:58vh; }
+        #map { position:absolute; inset:0; background:#0d1628; }
+        #map.drawing { cursor:crosshair; touch-action:none; }
+
+        button { font:inherit; font-weight:600; border:1px solid var(--line); background:var(--field); color:var(--text); padding:9px 12px; border-radius:6px; cursor:pointer; }
+        button:hover:not(:disabled) { border-color:var(--accent); }
+        button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+        button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+        button.primary:hover:not(:disabled) { background:#7dd3fc; }
+        button.toggled { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+        button:disabled { opacity:.45; cursor:not-allowed; }
+        button.small { padding:6px 10px; font-size:13px; }
+        select, input[type=text], input[type=number], input[type=search] { font:inherit; width:100%; background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; }
+        label { cursor:pointer; }
+        .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .row > select, .row > input { flex:1; min-width:0; }
+        .muted { color:var(--muted); font-size:13px; }
+
+        .map-tools { position:absolute; top:10px; right:10px; z-index:500; display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+        .map-tools button { background:rgba(13,22,40,.92); }
+        .map-tools button.toggled { background:var(--accent); }
+        .map-hint { position:absolute; left:10px; bottom:10px; z-index:500; background:rgba(13,22,40,.92); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font-size:13px; }
+
+        .coords { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .coords label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); }
+        .coords input { font-family:"IBM Plex Mono", monospace; color:var(--ok); }
+        #coords-msg { min-height:18px; font-size:13px; }
+
+        .list { max-height:230px; overflow-y:auto; border:1px solid var(--line); border-radius:6px; background:var(--field); padding:4px; }
+        .list label { display:flex; gap:8px; align-items:baseline; padding:5px 6px; border-radius:4px; }
+        .list label:hover { background:rgba(56,189,248,.08); }
+        .list .code { font-family:"IBM Plex Mono", monospace; color:var(--accent); min-width:54px; }
+        .chips { display:flex; flex-wrap:wrap; gap:6px; }
+        .chip { position:relative; }
+        .chip input { position:absolute; opacity:0; inset:0; cursor:pointer; }
+        .chip span { display:block; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:var(--field); font-family:"IBM Plex Mono", monospace; font-size:13px; min-width:58px; text-align:center; }
+        .chip input:checked + span { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+        .chip input:focus-visible + span { outline:2px solid var(--accent); outline-offset:1px; }
+
+        progress { width:100%; height:10px; accent-color:var(--accent); }
+        #job-box { display:none; flex-direction:column; gap:6px; }
+        #job-msg { font-size:13px; }
+        .ok { color:var(--ok); } .err { color:var(--err); } .warn { color:var(--warn); }
+        #summary { font-size:13px; color:var(--muted); }
+
+        @media (max-width:860px) {
+            .layout { grid-template-columns:1fr; }
+            #panel-map { height:60vh; }
+        }
+        @media (prefers-reduced-motion:no-preference) { button { transition:border-color .15s, background .15s; } }
     </style>
 </head>
 <body>
+<header>
+    <h1>GRIB Cropper</h1>
+    <a href="/">Accueil</a>
+    <span id="run-info">Run : en attente du scan</span>
+</header>
 
-    <div id="sidebar">
-        <h2 style="font-size: 20px; margin-top: 0; margin-bottom: 2px;">🌐 GRIB Cloud Cropper</h2>
-        <div id="status" style="color: #94a3b8; font-size: 11px;">Configurez le type de données puis lancez le scan.</div>
-
-        <h3>⚙️ Type de Données GRIB :</h3>
-        <select id="mode-select" style="border: 1px solid #0ea5e9; font-weight: bold; color: #0ea5e9;">
-            <option value="sfc" selected>🌍 MODE SURFACE (Vent à 10m, Pression MSL, etc.)</option>
-            <option value="pl">🌬️ MODE ALTITUDE (Pression, Vents verticaux hPa, etc.)</option>
+<div class="layout">
+    <!-- Zone 1 : données et domaines -->
+    <section class="panel" aria-labelledby="t-data">
+        <h2 id="t-data">Données et zone</h2>
+        <label class="muted" for="mode-select">Type de données</label>
+        <select id="mode-select">
+            <option value="sfc">Surface (vent 10 m, pression mer, température…)</option>
+            <option value="pl">Altitude (niveaux en hPa)</option>
         </select>
-
-        <h3>⏱️ 1. Échéances :</h3>
-        <div class="step-grid" id="step-container">
-            <label class="step-item"><input type="checkbox" value="12" checked> +12h</label>
-            <label class="step-item"><input type="checkbox" value="24" checked> +24h</label>
-            <label class="step-item"><input type="checkbox" value="48"> +48h</label>
-            <label class="step-item"><input type="checkbox" value="72"> +72h</label>
-        </div>
-        <button id="btn-scan" class="btn-warning" style="margin-top: 5px;">🔍 Scan automatique du fichier distant</button>
-
-        <h3>📊 2. Paramètres détectés :</h3>
-        <select id="param-list" multiple><option disabled>En attente du scan...</option></select>
-
-        <h3>📉 3. Profondeurs détectées :</h3>
-        <select id="level-list" multiple><option disabled>En attente du scan...</option></select>
-
-        <h3>💾 4. Zones Favorites :</h3>
-        <div style="display: flex; gap: 5px; width: 100%;">
-            <select id="fav-select" style="flex:1;">
-                <option value="">-- Choisir une zone --</option>
-                <option value='{"n":51,"s":43,"e":3,"w":-6}'>Manche / Bretagne</option>
-                <option value='{"n":48,"s":43,"e":-1,"w":-10}'>Golfe de Gascogne</option>
-                <option value='{"n":44,"s":35,"e":20,"w":-5}'>Méditerranée Ouest</option>
-            </select>
-            <button id="btn-load-fav" class="btn-success">📂 OK</button>
+        <div class="row">
+            <button id="btn-scan" class="small">Scanner le catalogue</button>
+            <span id="scan-status" class="muted" role="status"></span>
         </div>
 
-        <h3>🌐 5. Zone de sélection :</h3>
-        <div id="coords-display" class="coords">Aucune zone tracée.</div>
-
-        <div id="progress-container" class="progress-box">
-            <span style="font-size:11px; color:#34d399;" id="progress-text">Traitement...</span>
-            <progress id="progress-bar" value="0" max="100"></progress>
+        <h3>Domaines</h3>
+        <select id="zone-select" aria-label="Domaines prédéfinis"></select>
+        <div class="row">
+            <button id="btn-zone-save" class="small">Enregistrer la zone actuelle</button>
+            <button id="btn-zone-del" class="small" disabled>Supprimer</button>
         </div>
 
-        <button id="btn-crop" disabled style="padding:14px; font-size:14px; margin-top: 5px;">🚀 Extraire & Télécharger</button>
-    </div>
+        <h3>Coordonnées (degrés)</h3>
+        <div class="coords">
+            <label>Nord<input id="in-n" type="number" step="0.25" inputmode="decimal"></label>
+            <label>Sud<input id="in-s" type="number" step="0.25" inputmode="decimal"></label>
+            <label>Ouest<input id="in-w" type="number" step="0.25" inputmode="decimal"></label>
+            <label>Est<input id="in-e" type="number" step="0.25" inputmode="decimal"></label>
+        </div>
+        <div id="coords-msg" class="muted" role="status">Aucune zone définie.</div>
+    </section>
 
-    <div id="map-container">
-        <canvas id="map-background"></canvas>
-        <canvas id="grid-canvas"></canvas>
-        <div id="selection-box" class="leaflet-zoom-box" style="display:none;"></div>
-    </div>
-    <script>
-        const canvas = document.getElementById('grid-canvas'); const ctx = canvas.getContext('2d');
-        const mapCanvas = document.getElementById('map-background'); const mctx = mapCanvas.getContext('2d');
-        const box = document.getElementById('selection-box'); const display = document.getElementById('coords-display');
+    <!-- Zone 2 : carte -->
+    <section id="panel-map" class="panel" aria-label="Carte de sélection de la zone">
+        <div id="map"></div>
+        <div class="map-tools">
+            <button id="btn-draw">Tracer une zone</button>
+            <button id="btn-grid" class="toggled" aria-pressed="true">Graticule</button>
+            <button id="btn-clear">Effacer</button>
+        </div>
+        <div id="map-hint" class="map-hint" hidden>Appuyez, glissez, relâchez pour tracer le rectangle.</div>
+    </section>
 
-        let isDrawing = false; let startX, startY, endX, endY; window.currentBounds = null;
+    <!-- Zone 3 : paramètres et niveaux -->
+    <section class="panel" aria-labelledby="t-params">
+        <h2 id="t-params">Paramètres et niveaux</h2>
+        <input id="param-filter" type="search" placeholder="Filtrer les paramètres" aria-label="Filtrer les paramètres">
+        <div class="row">
+            <button id="params-all" class="small">Tout cocher</button>
+            <button id="params-none" class="small">Tout décocher</button>
+        </div>
+        <div id="param-list" class="list" role="group" aria-label="Paramètres">
+            <span class="muted" style="padding:6px">Scan du catalogue en cours…</span>
+        </div>
+        <div id="levels-block" hidden>
+            <h3>Niveaux (hPa)</h3>
+            <div id="level-list" class="chips" role="group" aria-label="Niveaux"></div>
+        </div>
+    </section>
 
-        function pixelToCoords(x, y) {
-            let lon = ((x / canvas.width) * 360) - 180;
-            let lat = 90 - ((y / canvas.height) * 180);
-            return { lat: parseFloat(lat.toFixed(2)), lon: parseFloat(lon.toFixed(2)) };
+    <!-- Zone 4 : échéances et extraction -->
+    <section class="panel" aria-labelledby="t-steps">
+        <h2 id="t-steps">Échéances et extraction</h2>
+        <div class="muted">Heures après 00Z du jour, pas de 6 h.</div>
+        <div class="row">
+            <button id="steps-all" class="small">Toutes</button>
+            <button id="steps-12" class="small">Toutes les 12 h</button>
+            <button id="steps-24" class="small">Toutes les 24 h</button>
+            <button id="steps-none" class="small">Aucune</button>
+        </div>
+        <div id="step-list" class="chips" role="group" aria-label="Échéances"></div>
+        <div id="summary"></div>
+        <div id="job-box">
+            <span id="job-msg" role="status"></span>
+            <progress id="job-bar" value="0" max="100"></progress>
+        </div>
+        <button id="btn-crop" class="primary" disabled>Extraire</button>
+        <a id="dl-link" class="ok" href="#" hidden>Télécharger à nouveau</a>
+    </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const BASE = '/cep';
+const $ = id => document.getElementById(id);
+const state = { bounds: null, params: [], levels: [], levtype: 'sfc', rect: null, drawMode: false, scanOk: false, runId: null };
+
+const LABELS = {
+    '10u':'Vent 10 m, composante U', '10v':'Vent 10 m, composante V', '100u':'Vent 100 m, composante U', '100v':'Vent 100 m, composante V',
+    '10fg':'Rafales 10 m', '2t':'Température 2 m', '2d':'Point de rosée 2 m', 'msl':'Pression au niveau de la mer', 'sp':'Pression de surface',
+    'tp':'Précipitations totales', 'tcc':'Couverture nuageuse totale', 'tcwv':'Eau précipitable', 'skt':'Température de surface',
+    'sst':'Température de la mer', 'ssrd':'Rayonnement solaire descendant', 'cape':'CAPE', 'mucape':'CAPE (parcelle la plus instable)',
+    'gh':'Géopotentiel (hauteur)', 'z':'Géopotentiel', 't':'Température', 'u':'Vent, composante U', 'v':'Vent, composante V',
+    'r':'Humidité relative', 'q':'Humidité spécifique', 'w':'Vitesse verticale', 'vo':'Tourbillon relatif', 'd':'Divergence'
+};
+
+/* ---------- domaines ---------- */
+const BUILTIN_ZONES = [
+    { name: 'Manche / Bretagne', n: 51, s: 43, e: 3, w: -6 },
+    { name: 'Golfe de Gascogne', n: 48, s: 43, e: -1, w: -10 },
+    { name: 'Méditerranée ouest', n: 44, s: 35, e: 20, w: -5 }
+];
+function loadCustomZones() { try { return JSON.parse(localStorage.getItem('gribcropper.zones') || '[]'); } catch (e) { return []; } }
+function saveCustomZones(z) { try { localStorage.setItem('gribcropper.zones', JSON.stringify(z)); } catch (e) {} }
+function renderZones(selectName) {
+    const sel = $('zone-select'); sel.innerHTML = '';
+    const first = new Option('Choisir un domaine…', ''); sel.add(first);
+    BUILTIN_ZONES.forEach((z, i) => sel.add(new Option(z.name, 'b' + i)));
+    loadCustomZones().forEach((z, i) => sel.add(new Option(z.name + ' (perso)', 'c' + i)));
+    if (selectName) sel.value = selectName;
+    $('btn-zone-del').disabled = !sel.value.startsWith('c');
+}
+function zoneFromValue(v) {
+    if (!v) return null;
+    return v[0] === 'b' ? BUILTIN_ZONES[+v.slice(1)] : loadCustomZones()[+v.slice(1)];
+}
+$('zone-select').onchange = () => {
+    const v = $('zone-select').value; $('btn-zone-del').disabled = !v.startsWith('c');
+    const z = zoneFromValue(v); if (z) setBounds(z, true);
+};
+$('btn-zone-save').onclick = () => {
+    if (!state.bounds) { setMsg('Définissez d\'abord une zone.', 'warn'); return; }
+    const name = (prompt('Nom du domaine :') || '').trim(); if (!name) return;
+    const zones = loadCustomZones(); zones.push({ name, ...state.bounds }); saveCustomZones(zones);
+    renderZones('c' + (zones.length - 1));
+};
+$('btn-zone-del').onclick = () => {
+    const v = $('zone-select').value; if (!v.startsWith('c')) return;
+    const zones = loadCustomZones(); zones.splice(+v.slice(1), 1); saveCustomZones(zones); renderZones();
+};
+
+/* ---------- carte ---------- */
+const map = L.map('map', { worldCopyJump: true, minZoom: 2, zoomControl: true }).setView([46, -4], 4);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap, &copy; CARTO', subdomains: 'abcd', maxZoom: 10
+}).addTo(map);
+const gridLayer = L.layerGroup().addTo(map);
+
+function wrapLon(lon) { return ((lon + 180) % 360 + 360) % 360 - 180; }
+function round2(x) { return Math.round(x * 100) / 100; }
+
+function drawGrid() {
+    gridLayer.clearLayers();
+    if (!$('btn-grid').classList.contains('toggled')) return;
+    const z = map.getZoom(); const step = z < 4 ? 30 : z < 6 ? 10 : z < 8 ? 5 : 1;
+    const b = map.getBounds(); const style = { color: '#38bdf8', weight: 0.6, opacity: 0.35, interactive: false };
+    const lat0 = Math.max(-90, Math.floor(b.getSouth() / step) * step), lat1 = Math.min(90, Math.ceil(b.getNorth() / step) * step);
+    const lon0 = Math.floor(b.getWest() / step) * step, lon1 = Math.ceil(b.getEast() / step) * step;
+    const label = (latlng, txt, anchor) => L.marker(latlng, { interactive: false, icon: L.divIcon({
+        className: '', html: `<span style="color:#8fa0ba;font:11px 'IBM Plex Mono',monospace;white-space:nowrap">${txt}</span>`, iconAnchor: anchor }) }).addTo(gridLayer);
+    for (let lat = lat0; lat <= lat1; lat += step) {
+        L.polyline([[lat, lon0], [lat, lon1]], style).addTo(gridLayer);
+        label([lat, b.getWest()], lat + '°', [-4, 12]);
+    }
+    for (let lon = lon0; lon <= lon1; lon += step) {
+        L.polyline([[-90, lon], [90, lon]], style).addTo(gridLayer);
+        label([b.getSouth(), lon], wrapLon(lon) + '°', [-4, 14]);
+    }
+}
+map.on('moveend zoomend', drawGrid); drawGrid();
+$('btn-grid').onclick = () => {
+    const on = $('btn-grid').classList.toggle('toggled'); $('btn-grid').setAttribute('aria-pressed', on); drawGrid();
+};
+
+/* ---------- zone : état, champs, rectangle ---------- */
+function setMsg(txt, cls) { const m = $('coords-msg'); m.textContent = txt; m.className = cls || 'muted'; }
+
+function setBounds(b, fit) {
+    const nb = { n: round2(Math.max(b.n, b.s)), s: round2(Math.min(b.n, b.s)), e: round2(wrapLon(Math.max(b.e, b.w))), w: round2(wrapLon(Math.min(b.e, b.w))) };
+    if (nb.e <= nb.w) { setMsg('Zones à cheval sur 180° non gérées : tracez-la en deux fois.', 'warn'); return; }
+    state.bounds = nb;
+    $('in-n').value = nb.n; $('in-s').value = nb.s; $('in-w').value = nb.w; $('in-e').value = nb.e;
+    const lb = [[nb.s, nb.w], [nb.n, nb.e]];
+    if (state.rect) state.rect.setBounds(lb);
+    else state.rect = L.rectangle(lb, { color: '#38bdf8', weight: 2, fillOpacity: 0.12, interactive: false }).addTo(map);
+    if (fit) map.fitBounds(lb, { padding: [30, 30], maxZoom: 7 });
+    setMsg(`Zone : ${nb.s}° à ${nb.n}° de latitude, ${nb.w}° à ${nb.e}° de longitude.`, 'ok');
+    updateReady();
+}
+['n', 's', 'w', 'e'].forEach(k => $('in-' + k).addEventListener('change', () => {
+    const v = {}; for (const key of ['n', 's', 'w', 'e']) v[key] = parseFloat($('in-' + key).value);
+    if (Object.values(v).some(Number.isNaN)) return;
+    if (v.n <= v.s) { setMsg('Le Nord doit être supérieur au Sud.', 'err'); return; }
+    if (v.e <= v.w) { setMsg('L\'Est doit être supérieur à l\'Ouest (entre -180° et 180°).', 'err'); return; }
+    if (v.n > 90 || v.s < -90 || v.w < -180 || v.e > 180) { setMsg('Valeurs hors limites.', 'err'); return; }
+    setBounds(v, true);
+}));
+$('btn-clear').onclick = () => {
+    if (state.rect) { map.removeLayer(state.rect); state.rect = null; }
+    state.bounds = null; ['n', 's', 'w', 'e'].forEach(k => $('in-' + k).value = '');
+    $('zone-select').value = ''; setMsg('Aucune zone définie.'); updateReady();
+};
+
+/* tracé au doigt ou à la souris : un mode explicite évite de confondre avec le déplacement de la carte */
+function setDrawMode(on) {
+    state.drawMode = on;
+    $('btn-draw').classList.toggle('toggled', on); $('map').classList.toggle('drawing', on);
+    $('map-hint').hidden = !on;
+    on ? map.dragging.disable() : map.dragging.enable();
+}
+$('btn-draw').onclick = () => setDrawMode(!state.drawMode);
+(function enableDrawing() {
+    const el = map.getContainer(); let start = null;
+    el.addEventListener('pointerdown', e => {
+        if (!state.drawMode || e.target.closest('.leaflet-control, .map-tools')) return;
+        e.preventDefault(); el.setPointerCapture(e.pointerId); start = map.mouseEventToLatLng(e);
+    });
+    el.addEventListener('pointermove', e => {
+        if (!start) return; const p = map.mouseEventToLatLng(e);
+        setBounds({ n: start.lat, s: p.lat, w: start.lng, e: p.lng }, false);
+    });
+    const end = () => { if (!start) return; start = null; setDrawMode(false); $('zone-select').value = ''; };
+    el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+})();
+/* les boutons posés sur la carte ne doivent pas déclencher le tracé */
+document.querySelector('.map-tools').addEventListener('pointerdown', e => e.stopPropagation());
+
+/* ---------- scan ---------- */
+function scan() {
+    state.levtype = $('mode-select').value; state.scanOk = false; state.runId = null;
+    $('btn-scan').disabled = true; $('scan-status').textContent = 'Scan en cours…'; $('scan-status').className = 'muted';
+    $('param-list').innerHTML = '<span class="muted" style="padding:6px">Scan du catalogue en cours…</span>';
+    $('levels-block').hidden = state.levtype !== 'pl'; $('level-list').innerHTML = '';
+    fetch(BASE + '/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ levtype: state.levtype }) })
+        .then(r => r.json()).then(d => {
+            $('btn-scan').disabled = false;
+            if (d.error) { $('scan-status').textContent = d.error; $('scan-status').className = 'err'; $('param-list').innerHTML = '<span class="muted" style="padding:6px">Scan impossible. Relancez-le.</span>'; return; }
+            state.scanOk = true; state.runId = d.run_id;
+            $('scan-status').textContent = `${d.params.length} paramètres`; $('scan-status').className = 'ok';
+            $('run-info').textContent = 'Run : ' + d.run;
+            renderParams(d.params); renderLevels(d.levels); updateReady();
+        }).catch(() => { $('btn-scan').disabled = false; $('scan-status').textContent = 'Serveur injoignable.'; $('scan-status').className = 'err'; });
+}
+$('btn-scan').onclick = scan; $('mode-select').onchange = scan;
+
+function renderParams(params) {
+    const box = $('param-list'); box.innerHTML = '';
+    params.forEach(p => {
+        const lab = document.createElement('label'); lab.dataset.search = (p + ' ' + (LABELS[p] || '')).toLowerCase();
+        lab.innerHTML = `<input type="checkbox" value="${p}"><span class="code">${p}</span><span>${LABELS[p] || ''}</span>`;
+        box.appendChild(lab);
+    });
+}
+function renderLevels(levels) {
+    const box = $('level-list'); box.innerHTML = '';
+    levels.forEach(l => {
+        const c = document.createElement('label'); c.className = 'chip';
+        c.innerHTML = `<input type="checkbox" value="${l}"><span>${l}</span>`; box.appendChild(c);
+    });
+}
+$('param-filter').oninput = () => {
+    const q = $('param-filter').value.trim().toLowerCase();
+    $('param-list').querySelectorAll('label').forEach(l => l.hidden = q && !l.dataset.search.includes(q));
+};
+const setAllParams = on => $('param-list').querySelectorAll('label:not([hidden]) input').forEach(i => i.checked = on);
+$('params-all').onclick = () => { setAllParams(true); updateReady(); };
+$('params-none').onclick = () => { setAllParams(false); updateReady(); };
+
+/* ---------- échéances ---------- */
+for (let h = 0; h <= 240; h += 6) {
+    const c = document.createElement('label'); c.className = 'chip';
+    c.innerHTML = `<input type="checkbox" value="${h}"><span>+${h} h</span>`; $('step-list').appendChild(c);
+}
+const stepBoxes = () => Array.from($('step-list').querySelectorAll('input'));
+const setSteps = fn => { stepBoxes().forEach(i => i.checked = fn(+i.value)); updateReady(); };
+$('steps-all').onclick = () => setSteps(() => true);
+$('steps-12').onclick = () => setSteps(h => h % 12 === 0);
+$('steps-24').onclick = () => setSteps(h => h % 24 === 0);
+$('steps-none').onclick = () => setSteps(() => false);
+
+/* ---------- état du bouton d'extraction ---------- */
+const checked = sel => Array.from(document.querySelectorAll(sel + ' input:checked')).map(i => i.value);
+function updateReady() {
+    const params = checked('#param-list'), levels = checked('#level-list'), steps = checked('#step-list');
+    const ok = state.bounds && state.scanOk && params.length && steps.length && (state.levtype !== 'pl' || levels.length);
+    $('btn-crop').disabled = !ok;
+    const n = steps.length;
+    $('summary').textContent = n ? `${params.length} paramètre(s), ${n} échéance(s) → ${n > 1 ? 'un ZIP de ' + n + ' fichiers GRIB' : 'un fichier GRIB'}` : '';
+}
+document.addEventListener('change', e => { if (e.target.matches('input[type=checkbox]')) updateReady(); });
+
+/* ---------- extraction ---------- */
+$('btn-crop').onclick = () => {
+    const payload = { bounds: state.bounds, params: checked('#param-list'), levels: checked('#level-list'), steps: checked('#step-list'), levtype: state.levtype, run: state.runId };
+    $('btn-crop').disabled = true; $('dl-link').hidden = true;
+    $('job-box').style.display = 'flex'; $('job-bar').value = 0; $('job-msg').className = ''; $('job-msg').textContent = 'Démarrage…';
+    fetch(BASE + '/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        .then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+            if (!ok) throw new Error(d.error || 'Requête refusée.');
+            poll(d.job_id);
+        }).catch(err => { $('job-msg').className = 'err'; $('job-msg').textContent = err.message; updateReady(); });
+};
+function poll(id) {
+    fetch(`${BASE}/api/job/${id}`).then(r => r.json()).then(j => {
+        if (j.status === 'running') {
+            $('job-bar').value = j.progress || 0; $('job-msg').textContent = j.message || '';
+            setTimeout(() => poll(id), 1000);
+        } else if (j.status === 'done') {
+            const url = `${BASE}/api/download/${id}/${j.file}`;
+            $('job-bar').value = 100; $('job-msg').className = 'ok';
+            $('job-msg').textContent = `Terminé — run ${j.run}, ${j.files} fichier(s), ${j.size_mb} Mo`;
+            $('dl-link').href = url; $('dl-link').hidden = false; updateReady(); window.location.href = url;
+        } else {
+            $('job-msg').className = 'err'; $('job-msg').textContent = j.error || 'Job introuvable (le serveur a peut-être redémarré). Relancez l\'extraction.'; updateReady();
         }
-        function toX(lon) { return ((lon + 180) / 360) * mapCanvas.width; }
-        function toY(lat) { return ((90 - lat) / 180) * mapCanvas.height; }
+    }).catch(() => setTimeout(() => poll(id), 2000));
+}
 
-        function resizeCanvas() {
-            canvas.width = window.innerWidth - 420; canvas.height = window.innerHeight;
-            mapCanvas.width = window.innerWidth - 420; mapCanvas.height = window.innerHeight;
-            drawWorldMap(); drawBackgroundGrid();
-        }
-
-        function drawShape(poly) {
-            if (!poly || poly.length < 2) return;
-            try {
-                mctx.beginPath(); mctx.moveTo(toX(poly[0]), toY(poly[0]));
-                for (let i = 1; i < poly.length; i++) mctx.lineTo(toX(poly[i]), toY(poly[i]));
-                mctx.closePath(); mctx.fill(); mctx.stroke();
-            } catch(e) {}
-        }
-        function drawWorldMap() {
-            mctx.fillStyle = '#0b0f19'; mctx.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
-            mctx.fillStyle = '#1e293b'; mctx.strokeStyle = '#334155'; mctx.lineWidth = 1.2;
-            drawShape([[-5.1,48.4],[-4.7,48.5],[-3.0,48.6],[-1.5,49.3],[-1.7,49.6],[-0.5,49.3],[1.3,50.1],[2.5,51.1],[4.5,51.4],[6.1,53.5],[8.5,54.5],[10.9,55.9],[14.2,54.2],[12.2,52.8],[6.1,51.1],[3.2,43.5],[4.8,43.3],[7.2,43.7],[9.2,44.2],[12.3,44.3],[13.6,45.7],[12.2,41.9],[15.0,38.2],[12.3,37.3],[14.1,40.7],[10.5,43.8],[7.4,43.4],[5.2,43.1],[3.1,41.9],[-1.4,43.4],[-1.2,44.6],[-2.2,47.2],[-5.1,48.4]]);
-            drawShape([[-1.4,43.4],[-3.7,43.4],[-9.0,43.0],[-9.5,42.3],[-8.9,38.5],[-9.3,37.0],[-5.3,36.1],[-1.0,36.8],[2.3,41.5],[3.1,41.9]]);
-            drawShape([[-5.0,50.1],[-6.0,50.5],[-5.3,52.1],[-4.9,54.1],[-6.4,56.5],[-7.2,58.3],[-4.1,57.6],[-1.9,57.1],[-1.8,55.5],[1.3,51.3],[-1.1,50.6],[-5.0,50.1]]);
-            drawShape([[-10.0,52.1],[-10.0,53.5],[-6.9,55.2],[-6.0,54.0],[-8.5,51.6],[-10.0,52.1]]);
-            drawShape([[8.7,42.6],[9.5,42.6],[9.4,41.4],[8.7,41.6]]); drawShape([[8.4,41.2],[9.7,40.9],[9.6,39.2],[8.4,38.9],[7.9,40.2]]);
-            drawShape([[-5.3,36.1],[5.0,36.8],[11.0,36.9],[15.0,32.3],[25.0,31.6],[34.0,29.6],[39.0,-4.0],[26.2,-34.1],[18.3,-34.4],[11.8,-12.3],[-14.5,14.5],[-17.3,17.2],[-17.0,21.3],[-13.1,32.3],[-6.1,35.9],[-5.3,36.1]]);
-            drawShape([[-160,70],[-120,68],[-100,75],[-80,62],[-60,50],[-52,47],[-74,40],[-80,25],[-97,25],[-115,30],[-140,60]]);
-            drawShape([[-75,12],[-70,10],[-50,-5],[-35,-5],[-42,-23],[-65,-50],[-75,-50],[-72,-15],[-80,-2],[-75,12]]);
-            drawShape([[14.2,54.2],[30.0,60.0],[60.0,65.0],[90.0,70.0],[120.0,72.0],[160.0,70.0],[170.0,60.0],[140.0,35.0],[120.0,25.0],[105.0,15.0],[90.0,10.0],[75.0,12.0],[60.0,25.0],[45.0,15.0],[34.0,29.6],[25.0,31.6],[15.0,32.3],[11.0,36.9],[14.2,54.2]]);
-            drawShape([[113,-25],[115,-33],[130,-32],[140,-37],[150,-34],[152,-25],[143,-15],[136,-12],[130,-12],[120,-15],[113,-25]]);
-            drawShape([[145,-41],[148,-41],[147,-43],[144,-43]]);
-        }
-
-        function drawBackgroundGrid() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)'; ctx.lineWidth = 0.5;
-            ctx.fillStyle = 'rgba(148, 163, 184, 0.6)'; ctx.font = '10px monospace';
-            for(let lon=-180; lon<=180; lon+=30) {
-                let x = toX(lon); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-                ctx.fillText(lon + '°', x + 4, canvas.height - 10);
-            }
-            for(let lat=-90; lat<=90; lat+=20) {
-                let y = toY(lat); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-                ctx.fillText(lat + '°', 10, y - 4);
-            }
-            ctx.strokeStyle = 'rgba(14, 165, 233, 0.45)'; ctx.lineWidth = 1.2;
-            ctx.beginPath(); ctx.moveTo(0, canvas.height/2); ctx.lineTo(canvas.width, canvas.height/2); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(canvas.width/2, 0); ctx.lineTo(canvas.width/2, canvas.height); ctx.stroke();
-        }
-
-        function drawSelectionBox() {
-            drawBackgroundGrid(); if (!isDrawing) return;
-            ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.fillStyle = 'rgba(56, 189, 248, 0.15)';
-            let x = Math.min(startX, endX); let y = Math.min(startY, endY);
-            let w = Math.abs(startX - endX); let h = Math.abs(startY - endY);
-            ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
-        }
-
-        window.addEventListener('resize', resizeCanvas); setTimeout(resizeCanvas, 100);
-                canvas.addEventListener('mousedown', function(e) {
-            if (!e.shiftKey) return; isDrawing = true;
-            const rect = canvas.getBoundingClientRect();
-            startX = e.clientX - rect.left; startY = e.clientY - rect.top; endX = startX; endY = startY;
-        });
-
-        canvas.addEventListener('mousemove', function(e) {
-            if (!isDrawing) return;
-            const rect = canvas.getBoundingClientRect();
-            endX = e.clientX - rect.left; endY = e.clientY - rect.top;
-            drawSelectionBox();
-            let sC = pixelToCoords(startX, startY); let eC = pixelToCoords(endX, endY);
-            window.currentBounds = { n: Math.max(sC.lat, eC.lat), s: Math.min(sC.lat, eC.lat), e: Math.max(sC.lon, eC.lon), w: Math.min(sC.lon, eC.lon) };
-            display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
-            checkReady();
-        });
-
-        canvas.addEventListener('mouseup', function() { if (isDrawing) isDrawing = false; });
-
-        document.getElementById('btn-load-fav').onclick = function() {
-            const val = document.getElementById('fav-select').value; if(!val) return;
-            window.currentBounds = JSON.parse(val);
-            display.innerHTML = `<b>N:</b> ${window.currentBounds.n}° | <b>S:</b> ${window.currentBounds.s}°<br><b>E:</b> ${window.currentBounds.e}° | <b>W:</b> ${window.currentBounds.w}°`;
-            startX = toX(window.currentBounds.w); startY = toY(window.currentBounds.n);
-            endX = toX(window.currentBounds.e); endY = toY(window.currentBounds.s);
-            isDrawing = true; drawSelectionBox(); isDrawing = false; checkReady();
-        };
-
-        // CORRECTION DE L'URL AVEC LE PRÉFIXE /CEP POUR L'ANALYSE DYNAMIQUE
-        document.getElementById('btn-scan').onclick = function() {
-            const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
-            const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
-            const mode = document.getElementById('mode-select').value;
-
-            if(selectedSteps.length === 0) { alert("⚠️ Cochez au moins une échéance."); return; }
-
-            document.getElementById('status').innerText = "⏳ Analyse du catalogue en cours...";
-            document.getElementById('btn-scan').disabled = true;
-
-            fetch('/cep/api/scan_ecmwf', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ steps: selectedSteps, levtype: mode })
-            })
-            .then(res => res.json()).then(data => {
-                document.getElementById('btn-scan').disabled = false;
-                if(data.error) { document.getElementById('status').innerText = "❌ " + data.error; }
-                else {
-                    document.getElementById('status').innerText = "✅ Scan réussi !";
-
-                    const pList = document.getElementById('param-list'); pList.innerHTML = "";
-                    data.params.forEach(p => { let o = document.createElement('option'); o.value = p; o.innerText = p; pList.appendChild(o); });
-
-                    const lList = document.getElementById('level-list'); lList.innerHTML = "";
-                    data.levels.forEach(l => {
-                        let o = document.createElement('option'); o.value = l;
-                        o.innerText = l === 0 ? "0 (Surface / Mer)" : `${l} hPa`;
-                        lList.appendChild(o);
-                    });
-                    checkReady();
-                }
-            }).catch(() => { document.getElementById('status').innerText = "❌ Erreur de liaison cloud."; document.getElementById('btn-scan').disabled = false; });
-        };
-
-        function checkReady() {
-            const pSelect = document.getElementById('param-list');
-            if (window.currentBounds && pSelect.options.length > 0 && pSelect.value !== "") {
-                document.getElementById('btn-crop').disabled = false;
-            }
-        }
-        document.getElementById('param-list').onchange = checkReady;
-        document.getElementById('level-list').onchange = checkReady;
-
-        // CORRECTION DE L'URL AVEC LE PRÉFIXE /CEP POUR L'EXTRACTION FINALE
-        document.getElementById('btn-crop').onclick = function() {
-            const selectedParams = Array.from(document.getElementById('param-list').selectedOptions).map(opt => opt.value);
-            const selectedLevels = Array.from(document.getElementById('level-list').selectedOptions).map(opt => opt.value);
-            const checkedBoxes = document.querySelectorAll('#step-container input[type="checkbox"]:checked');
-            const selectedSteps = Array.from(checkedBoxes).map(cb => cb.value);
-            const mode = document.getElementById('mode-select').value;
-
-            document.getElementById('progress-container').style.display = 'flex';
-            document.getElementById('btn-crop').disabled = true;
-
-            let progressInterval = setInterval(function() {
-                fetch('/cep/api/progress').then(res => res.json()).then(data => {
-                    document.getElementById('progress-bar').value = data.progress;
-                    document.getElementById('progress-text').innerText = "Extraction cloud en cours : " + data.progress + "%";
-                });
-            }, 500);
-
-            fetch('/cep/api/fetch_and_crop', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bounds: window.currentBounds, params: selectedParams, levels: selectedLevels, steps: selectedSteps, levtype: mode })
-            })
-            .then(res => res.json()).then(data => {
-                clearInterval(progressInterval); document.getElementById('progress-container').style.display = 'none'; document.getElementById('btn-crop').disabled = false;
-                if (data.success) { window.location.href = data.download_url; } else { alert("❌ " + data.error); }
-                if (data.success) {
-                    // CORRECTION ICI : Ajout du préfixe /cep pour télécharger au bon endroit
-                    window.location.href = "/cep" + data.download_url;
-                } else {
-                    alert("❌ " + data.error);
-                }
-            });
-        };
-    </script>
+renderZones(); updateReady(); scan();
+</script>
 </body>
 </html>
-~
