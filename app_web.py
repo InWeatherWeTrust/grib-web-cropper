@@ -3,6 +3,8 @@
 Le run (00Z du jour, sinon 12Z de la veille) est choisi lors du scan et renvoyé au navigateur
 (run_id) ; l'extraction utilise exactement ce run.
 
+Les noms des paramètres sont lus dans le GRIB (pygrib : name, units), jamais écrits en dur.
+
 Fonctionnement :
   - l'extraction tourne en tâche de fond (un job par demande), le navigateur interroge /api/job/<id> ;
   - un fichier GRIB par échéance ; un ZIP si plusieurs échéances ;
@@ -44,6 +46,8 @@ SCAN_TTL = 6 * 3600
 
 JOBS = {}
 SCAN_CACHE = {}
+LABEL_CACHE = {}   # (run, levtype) -> {shortName: {name, units}}
+LABEL_LOCK = threading.Lock()
 LOCK = threading.Lock()
 JOB_ID_RE = re.compile(r'^[0-9a-f]{32}$')
 
@@ -100,14 +104,21 @@ def run_label(run_dt, offset):
 
 # --------------------------------------------------------------------------- scan
 
-def scan_from_index(run_dt, levtype):
-    """Liste paramètres/niveaux à partir du fichier .index (quelques ko) sans télécharger le GRIB."""
+def index_url(run_dt, ext):
     d, h = run_dt.strftime('%Y%m%d'), f"{run_dt.hour:02d}"
-    url = f"https://data.ecmwf.int/forecasts/{d}/{h}z/ifs/0p25/oper/{d}{h}0000-0h-oper-fc.index"
-    with urllib.request.urlopen(url, timeout=20) as resp:
-        rows = [json.loads(line) for line in resp.read().decode().splitlines() if line.strip()]
+    return f"https://data.ecmwf.int/forecasts/{d}/{h}z/ifs/0p25/oper/{d}{h}0000-0h-oper-fc.{ext}"
+
+
+def fetch_index_rows(run_dt):
+    """Lit le fichier .index (quelques ko) : une ligne JSON par message GRIB."""
+    with urllib.request.urlopen(index_url(run_dt, "index"), timeout=20) as resp:
+        return [json.loads(line) for line in resp.read().decode().splitlines() if line.strip()]
+
+
+def scan_from_index(run_dt, levtype):
+    """Liste paramètres/niveaux à partir de l'index, sans télécharger le GRIB."""
     params, levels = set(), set()
-    for row in rows:
+    for row in fetch_index_rows(run_dt):
         if row.get("levtype") != levtype:
             continue
         if row.get("param"):
@@ -119,26 +130,62 @@ def scan_from_index(run_dt, levtype):
     return sorted(params), sorted(levels)
 
 
-def scan_from_download(client, run_dt, offset, levtype):
-    """Plan B : télécharge une échéance complète (lent) et lit son contenu."""
-    path = os.path.join(WORK_DIR, f"scan_{uuid.uuid4().hex}.grib2")
-    params, levels = set(), set()
+def read_labels(path):
+    """Lit dans un fichier GRIB le nom et l'unité de chaque paramètre (champs name et units)."""
+    labels = {}
+    fin = pygrib.open(path)
     try:
-        client.retrieve(target=path, **run_request(run_dt, offset, levtype))
-        fin = pygrib.open(path)
-        try:
-            for grb in fin:
-                short = getattr(grb, 'shortName', '')
-                if short:
-                    params.add(short)
-                if levtype == "pl":
-                    levels.add(int(getattr(grb, 'level', 0)))
-        finally:
-            fin.close()
+        for grb in fin:
+            short = getattr(grb, 'shortName', '')
+            if short and short not in labels:
+                labels[short] = {"name": getattr(grb, 'name', short), "units": getattr(grb, 'units', '')}
+    finally:
+        fin.close()
+    return labels
+
+
+def labels_from_ranges(run_dt, levtype):
+    """Télécharge UN message par paramètre (requêtes HTTP Range d'après l'index) et en lit les noms."""
+    first = {}
+    for row in fetch_index_rows(run_dt):
+        if row.get("levtype") == levtype and row.get("param") and row["param"] not in first \
+                and "_offset" in row and "_length" in row:
+            first[row["param"]] = row
+    if not first:
+        raise ValueError("index sans positions d'octets")
+    url = index_url(run_dt, "grib2")
+    path = os.path.join(WORK_DIR, f"labels_{uuid.uuid4().hex}.grib2")
+    try:
+        with open(path, "wb") as fout:
+            for row in first.values():
+                start, length = int(row["_offset"]), int(row["_length"])
+                req = urllib.request.Request(url, headers={"Range": f"bytes={start}-{start + length - 1}"})
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    fout.write(resp.read())
+        return read_labels(path)
     finally:
         if os.path.exists(path):
             os.remove(path)
-    return sorted(params), sorted(levels)
+
+
+def scan_from_download(client, run_dt, offset, levtype):
+    """Plan B : télécharge une échéance complète (lent) et lit son contenu. Retourne aussi les noms."""
+    path = os.path.join(WORK_DIR, f"scan_{uuid.uuid4().hex}.grib2")
+    levels = set()
+    try:
+        client.retrieve(target=path, **run_request(run_dt, offset, levtype))
+        labels = read_labels(path)
+        if levtype == "pl":
+            fin = pygrib.open(path)
+            try:
+                for grb in fin:
+                    levels.add(int(getattr(grb, 'level', 0)))
+            finally:
+                fin.close()
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+    return sorted(labels), sorted(levels), labels
 
 
 @app.route('/')
@@ -148,6 +195,8 @@ def index():
 
 @app.route('/api/scan', methods=['POST'])
 def scan():
+    """Choisit le run, puis liste paramètres et niveaux. Les noms (labels) viennent de /api/labels
+    quand ils ne sont pas déjà en mémoire."""
     levtype = (request.json or {}).get("levtype", "sfc")
     if levtype not in ("sfc", "pl"):
         return jsonify({"error": "Mode inconnu."}), 400
@@ -156,16 +205,39 @@ def scan():
         run_dt, offset = choose_run(client, 0)
         key = (run_dt.isoformat(), levtype)
         cached = SCAN_CACHE.get(key)
-        if cached and time.time() - cached["t"] < SCAN_TTL:
-            return jsonify(cached["data"])
-        try:
-            params, levels = scan_from_index(run_dt, levtype)
-        except Exception:
-            params, levels = scan_from_download(client, run_dt, offset, levtype)
-        data = {"success": True, "params": params, "levels": levels, "run": run_label(run_dt, offset),
-                "run_id": run_dt.strftime('%Y%m%d%H')}
-        SCAN_CACHE[key] = {"t": time.time(), "data": data}
-        return jsonify(data)
+        if not cached or time.time() - cached["t"] >= SCAN_TTL:
+            try:
+                params, levels = scan_from_index(run_dt, levtype)
+            except Exception:
+                params, levels, labels = scan_from_download(client, run_dt, offset, levtype)
+                LABEL_CACHE[key] = labels
+            cached = {"t": time.time(), "params": params, "levels": levels}
+            SCAN_CACHE[key] = cached
+        return jsonify({"success": True, "params": cached["params"], "levels": cached["levels"],
+                        "run": run_label(run_dt, offset), "run_id": run_dt.strftime('%Y%m%d%H'),
+                        "labels": LABEL_CACHE.get(key, {})})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route('/api/labels', methods=['POST'])
+def labels():
+    """Analyse un message GRIB par paramètre pour en lire le nom et l'unité (lent, mis en cache)."""
+    d = request.json or {}
+    levtype = d.get("levtype", "sfc")
+    found = run_from_id(d.get("run"))
+    if levtype not in ("sfc", "pl") or found is None:
+        return jsonify({"error": "Run ou mode invalide. Relancez le scan."}), 400
+    run_dt, offset = found
+    key = (run_dt.isoformat(), levtype)
+    try:
+        with LABEL_LOCK:                      # évite deux analyses identiques en parallèle
+            if key not in LABEL_CACHE:
+                try:
+                    LABEL_CACHE[key] = labels_from_ranges(run_dt, levtype)
+                except Exception:
+                    _, _, LABEL_CACHE[key] = scan_from_download(Client(source="ecmwf"), run_dt, offset, levtype)
+        return jsonify({"success": True, "labels": LABEL_CACHE[key]})
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
