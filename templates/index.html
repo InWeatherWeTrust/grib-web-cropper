@@ -168,16 +168,10 @@
 <script>
 const BASE = '/cep';
 const $ = id => document.getElementById(id);
-const state = { bounds: null, params: [], levels: [], levtype: 'sfc', rect: null, drawMode: false, scanOk: false, runId: null };
+const state = { bounds: null, params: [], levels: [], levtype: 'sfc', rect: null, drawMode: false, scanOk: false, runId: null, nParams: 0 };
 
-const LABELS = {
-    '10u':'Vent 10 m, composante U', '10v':'Vent 10 m, composante V', '100u':'Vent 100 m, composante U', '100v':'Vent 100 m, composante V',
-    '10fg':'Rafales 10 m', '2t':'Température 2 m', '2d':'Point de rosée 2 m', 'msl':'Pression au niveau de la mer', 'sp':'Pression de surface',
-    'tp':'Précipitations totales', 'tcc':'Couverture nuageuse totale', 'tcwv':'Eau précipitable', 'skt':'Température de surface',
-    'sst':'Température de la mer', 'ssrd':'Rayonnement solaire descendant', 'cape':'CAPE', 'mucape':'CAPE (parcelle la plus instable)',
-    'gh':'Géopotentiel (hauteur)', 'z':'Géopotentiel', 't':'Température', 'u':'Vent, composante U', 'v':'Vent, composante V',
-    'r':'Humidité relative', 'q':'Humidité spécifique', 'w':'Vitesse verticale', 'vo':'Tourbillon relatif', 'd':'Divergence'
-};
+let LABELS = {};   // rempli par l'analyse du GRIB : { code: { name, units } }
+const labelOf = p => LABELS[p] ? `${LABELS[p].name}${LABELS[p].units ? ' (' + LABELS[p].units + ')' : ''}` : '';
 
 /* ---------- domaines ---------- */
 const BUILTIN_ZONES = [
@@ -313,7 +307,8 @@ function scan() {
             state.scanOk = true; state.runId = d.run_id;
             $('scan-status').textContent = `${d.params.length} paramètres`; $('scan-status').className = 'ok';
             $('run-info').textContent = 'Run : ' + d.run;
-            renderParams(d.params); renderLevels(d.levels); updateReady();
+            state.nParams = d.params.length; renderParams(d.params); renderLevels(d.levels); updateReady();
+            if (Object.keys(d.labels || {}).length) applyLabels(d.labels); else loadLabels(d.run_id, state.levtype);
         }).catch(() => { $('btn-scan').disabled = false; $('scan-status').textContent = 'Serveur injoignable.'; $('scan-status').className = 'err'; });
 }
 $('btn-scan').onclick = scan; $('mode-select').onchange = scan;
@@ -321,10 +316,27 @@ $('btn-scan').onclick = scan; $('mode-select').onchange = scan;
 function renderParams(params) {
     const box = $('param-list'); box.innerHTML = '';
     params.forEach(p => {
-        const lab = document.createElement('label'); lab.dataset.search = (p + ' ' + (LABELS[p] || '')).toLowerCase();
-        lab.innerHTML = `<input type="checkbox" value="${p}"><span class="code">${p}</span><span>${LABELS[p] || ''}</span>`;
+        const lab = document.createElement('label'); lab.dataset.search = p.toLowerCase();
+        lab.innerHTML = `<input type="checkbox" value="${p}"><span class="code">${p}</span><span class="pname"></span>`;
         box.appendChild(lab);
     });
+}
+function applyLabels(labels) {
+    LABELS = labels || {};
+    $('param-list').querySelectorAll('label').forEach(l => {
+        const p = l.querySelector('input').value, txt = labelOf(p);
+        l.querySelector('.pname').textContent = txt; l.dataset.search = (p + ' ' + txt).toLowerCase();
+    });
+    $('param-filter').oninput();
+}
+function loadLabels(runId, levtype) {
+    $('scan-status').textContent += ' — lecture des noms…';
+    fetch(BASE + '/api/labels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run: runId, levtype }) })
+        .then(r => r.json()).then(d => {
+            if (runId !== state.runId) return;              // un autre scan a pris le relais
+            if (d.error) { $('scan-status').textContent = `${state.nParams} paramètres (noms indisponibles)`; return; }
+            $('scan-status').textContent = `${state.nParams} paramètres`; applyLabels(d.labels);
+        }).catch(() => { $('scan-status').textContent = `${state.nParams} paramètres (noms indisponibles)`; });
 }
 function renderLevels(levels) {
     const box = $('level-list'); box.innerHTML = '';
